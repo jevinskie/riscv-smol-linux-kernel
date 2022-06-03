@@ -36,6 +36,36 @@
 
 #include "head.h"
 
+#ifdef CONFIG_EARLY_PRINTK
+static void sbi_console_write(struct console *co, const char *buf,
+			      unsigned int n)
+{
+	for (int i = 0; i < n; ++i) {
+		if (buf[i] == '\n')
+			sbi_console_putchar('\r');
+		sbi_console_putchar(buf[i]);
+	}
+}
+
+struct console riscv_sbi_early_console_dev __initdata = {
+	.name = "earlycon",
+	.write = sbi_console_write,
+	.flags = CON_PRINTBUFFER | CON_BOOT | CON_ANYTIME,
+	.index = -1
+};
+
+static int __init setup_early_printk(char *buf)
+{
+	if (likely(early_console == NULL)) {
+		early_console = &riscv_sbi_early_console_dev;
+		register_console(early_console);
+	}
+	return 0;
+}
+
+early_param("earlyprintk", setup_early_printk);
+#endif
+
 #if defined(CONFIG_DUMMY_CONSOLE) || defined(CONFIG_EFI)
 struct screen_info screen_info __section(".data") = {
 	.orig_video_lines	= 30,
@@ -263,6 +293,10 @@ static void __init parse_dtb(void)
 
 void __init setup_arch(char **cmdline_p)
 {
+#ifdef CONFIG_EARLY_PRINTK_EARLIER
+	setup_early_printk(NULL);
+#endif
+
 	parse_dtb();
 	setup_initial_init_mm(_stext, _etext, _edata, _end);
 
