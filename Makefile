@@ -417,7 +417,7 @@ KCONFIG_CONFIG	?= .config
 export KCONFIG_CONFIG
 
 # SHELL used by kbuild
-CONFIG_SHELL := bash
+CONFIG_SHELL := sh
 
 HOST_LFS_CFLAGS := $(shell getconf LFS_CFLAGS 2>/dev/null)
 HOST_LFS_LDFLAGS := $(shell getconf LFS_LDFLAGS 2>/dev/null)
@@ -919,14 +919,6 @@ ifeq ($(shell test $(CONFIG_LLD_VERSION) -lt 130000; echo $$?),0)
 KBUILD_LDFLAGS	+= -plugin-opt=-warn-stack-size=$(CONFIG_FRAME_WARN)
 endif
 endif
-endif
-
-ifdef CONFIG_LTO_GCC
-CC_FLAGS_LTO    := -flto=auto -fno-fat-lto-objects -fuse-linker-plugin
-ifdef CONFIG_LTO_GCC_FULL
-CC_FLAGS_LTO    += -flto-partition=one
-endif
-# KBUILD_LDFLAGS  += $(KBUILD_CFLAGS) $(CC_FLAGS_LTO)
 endif
 
 ifdef CONFIG_LTO

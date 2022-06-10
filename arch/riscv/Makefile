@@ -173,8 +173,3 @@ rv64_randconfig:
 PHONY += rv32_defconfig
 rv32_defconfig:
 	$(Q)$(MAKE) -f $(srctree)/Makefile defconfig 32-bit.config
-
-PHONY += rv32_smolconfig
-rv32_smolconfig:
-	$(Q)$(MAKE) KCONFIG_ALLCONFIG=$(srctree)/arch/riscv/configs/rv32_smolconfig \
-		-f $(srctree)/Makefile allnoconfig
