@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0
 #
 # link vmlinux
@@ -207,7 +207,10 @@ vmlinux_link()
 		ldflags="${ldflags} ${wl}-Map=${output}.map"
 	fi
 
-	${ld} ${ldflags} -o ${output}					\
+	ldflags_list=( ${ldflags} )
+	wl=-Wl,
+
+	${CC} ${ldflags_list[@]/#/-Wl,} -o ${output}					\
 		${wl}--whole-archive ${objs} ${wl}--no-whole-archive	\
 		${wl}--start-group ${libs} ${wl}--end-group		\
 		$@ ${ldlibs}

@@ -647,6 +647,12 @@ config LTO_CLANG
 	help
 	  Selected if the kernel will be built using Clang's LTO feature.
 
+config LTO_GCC
+	bool
+	select LTO
+	help
+	  Selected if the kernel will be built using GCC's LTO feature.
+
 config ARCH_SUPPORTS_LTO_CLANG
 	bool
 	help
@@ -721,6 +727,14 @@ config LTO_CLANG_THIN
 	    https://clang.llvm.org/docs/ThinLTO.html
 
 	  If unsure, say Y.
+
+config LTO_GCC_FULL
+	bool "GCC LTO (EXPERIMENTAL)"
+	depends on !COMPILE_TEST
+	select LTO_GCC
+	help
+	  This option enables GCC's Link Time Optimization (LTO), which
+	  allows the compiler to optimize the kernel globally.
 endchoice
 
 config ARCH_SUPPORTS_CFI_CLANG
