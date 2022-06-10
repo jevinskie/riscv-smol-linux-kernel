@@ -1407,6 +1407,14 @@ config CC_OPTIMIZE_FOR_SIZE
 
 endchoice
 
+config CC_OPTIMIZE_SAVE_RESTORE
+	bool "Turn prologue and epilogue code into library calls (EXPERIMENTAL)"
+	depends on EXPERT
+	depends on $(cc-option,-msave-restore)
+	help
+	  Enable this if you want to reduce code size by outlining
+	  function prologues and epilogues into library calls.
+
 config HAVE_LD_DEAD_CODE_DATA_ELIMINATION
 	bool
 	help

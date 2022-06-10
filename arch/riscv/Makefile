@@ -31,8 +31,8 @@ else
 	BITS := 32
 	UTS_MACHINE := riscv32
 
-	KBUILD_CFLAGS += -mabi=ilp32
-	KBUILD_AFLAGS += -mabi=ilp32
+	KBUILD_CFLAGS += -mabi=ilp32d
+	KBUILD_AFLAGS += -mabi=ilp32d
 	KBUILD_LDFLAGS += -melf32lriscv
 endif
 
@@ -56,10 +56,12 @@ riscv-march-$(CONFIG_RISCV_ISA_C)	:= $(riscv-march-y)c
 toolchain-need-zicsr-zifencei := $(call cc-option-yn, -march=$(riscv-march-y)_zicsr_zifencei)
 riscv-march-$(toolchain-need-zicsr-zifencei) := $(riscv-march-y)_zicsr_zifencei
 
-KBUILD_CFLAGS += -march=$(subst fd,,$(riscv-march-y))
+# KBUILD_CFLAGS += -march=$(subst fd,,$(riscv-march-y))
 KBUILD_AFLAGS += -march=$(riscv-march-y)
 
-KBUILD_CFLAGS += -mno-save-restore
+ifeq ($(CC_OPTIMIZE_SAVE_RESTORE),n)
+	KBUILD_CFLAGS += -mno-save-restore
+endif
 KBUILD_CFLAGS += -DCONFIG_PAGE_OFFSET=$(CONFIG_PAGE_OFFSET)
 
 ifeq ($(CONFIG_CMODEL_MEDLOW),y)
