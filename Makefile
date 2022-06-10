@@ -877,12 +877,17 @@ ifdef CONFIG_DEBUG_SECTION_MISMATCH
 KBUILD_CFLAGS += -fno-inline-functions-called-once
 endif
 
-ifdef CONFIG_CC_OPTIMIZE_SAVE_RESTORE
+ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE_SAVE_RESTORE
 KBUILD_CFLAGS += -msave-restore
-LIBGCC		  := $(shell $(CC) -print-libgcc-file-name)
+LIBGCC        := $(shell $(CC) -print-libgcc-file-name)
 export LIBGCC
 libs-y        += $(LIBGCC)
 endif
+
+ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE_ALLOW_UNALIGNED
+KBUILD_CFLAGS += -mno-strict-align
+endif
+
 
 ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
 KBUILD_CFLAGS_KERNEL += -ffunction-sections -fdata-sections

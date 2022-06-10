@@ -45,6 +45,11 @@ ifndef CONFIG_AS_IS_LLVM
 endif
 endif
 
+# unfortunately not seen to have any effect on size
+ifeq ($(CONFIG_CC_OPTIMIZE_FOR_SIZE),y)
+	KBUILD_CFLAGS += -mshorten-memrefs
+endif
+
 # ISA string setting
 riscv-march-$(CONFIG_ARCH_RV32I)	:= rv32ima
 riscv-march-$(CONFIG_ARCH_RV64I)	:= rv64ima
@@ -56,10 +61,12 @@ riscv-march-$(CONFIG_RISCV_ISA_C)	:= $(riscv-march-y)c
 toolchain-need-zicsr-zifencei := $(call cc-option-yn, -march=$(riscv-march-y)_zicsr_zifencei)
 riscv-march-$(toolchain-need-zicsr-zifencei) := $(riscv-march-y)_zicsr_zifencei
 
+# HACK: kernel probably wants soft-float so they dont accidentially
+# trample on FPU context? But it allows -msave-restore for now
 # KBUILD_CFLAGS += -march=$(subst fd,,$(riscv-march-y))
 KBUILD_AFLAGS += -march=$(riscv-march-y)
 
-ifeq ($(CC_OPTIMIZE_SAVE_RESTORE),n)
+ifneq ($(CONFIG_CC_OPTIMIZE_FOR_SIZE_SAVE_RESTORE),y)
 	KBUILD_CFLAGS += -mno-save-restore
 endif
 KBUILD_CFLAGS += -DCONFIG_PAGE_OFFSET=$(CONFIG_PAGE_OFFSET)
@@ -80,7 +87,9 @@ KBUILD_CFLAGS_MODULE += $(call cc-option,-mno-relax)
 # unaligned accesses.  While unaligned accesses are explicitly allowed in the
 # RISC-V ISA, they're emulated by machine mode traps on all extant
 # architectures.  It's faster to have GCC emit only aligned accesses.
-KBUILD_CFLAGS += $(call cc-option,-mstrict-align)
+ifneq ($(CONFIG_CC_OPTIMIZE_FOR_SIZE_ALLOW_UNALIGNED),y)
+	KBUILD_CFLAGS += $(call cc-option,-mstrict-align)
+endif
 
 ifeq ($(CONFIG_STACKPROTECTOR_PER_TASK),y)
 prepare: stack_protector_prepare

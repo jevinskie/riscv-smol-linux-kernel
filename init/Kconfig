@@ -1407,13 +1407,23 @@ config CC_OPTIMIZE_FOR_SIZE
 
 endchoice
 
-config CC_OPTIMIZE_SAVE_RESTORE
+config CC_OPTIMIZE_FOR_SIZE_SAVE_RESTORE
 	bool "Turn prologue and epilogue code into library calls (EXPERIMENTAL)"
 	depends on EXPERT
 	depends on $(cc-option,-msave-restore)
 	help
 	  Enable this if you want to reduce code size by outlining
 	  function prologues and epilogues into library calls.
+
+config CC_OPTIMIZE_FOR_SIZE_ALLOW_UNALIGNED
+	bool "Allow unaligned accesses for slower but smaller code (EXPERIMENTAL)"
+	depends on EXPERT
+	depends on $(cc-option,-mno-strict-align)
+	help
+	  Enable this if you want to reduce code size by enabling
+	  unaligned accesses. Unaligned accesses may be slower but
+	  also allow the compiler to generate more compact code and
+	  struct layouts.
 
 config HAVE_LD_DEAD_CODE_DATA_ELIMINATION
 	bool
