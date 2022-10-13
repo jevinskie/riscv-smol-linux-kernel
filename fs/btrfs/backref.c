@@ -1511,16 +1511,118 @@ int btrfs_find_all_roots(struct btrfs_trans_handle *trans,
 	return ret;
 }
 
-/**
- * Check if an extent is shared or not
+/*
+ * The caller has joined a transaction or is holding a read lock on the
+ * fs_info->commit_root_sem semaphore, so no need to worry about the root's last
+ * snapshot field changing while updating or checking the cache.
+ */
+static bool lookup_backref_shared_cache(struct btrfs_backref_shared_cache *cache,
+					struct btrfs_root *root,
+					u64 bytenr, int level, bool *is_shared)
+{
+	struct btrfs_backref_shared_cache_entry *entry;
+
+	if (WARN_ON_ONCE(level >= BTRFS_MAX_LEVEL))
+		return false;
+
+	/*
+	 * Level -1 is used for the data extent, which is not reliable to cache
+	 * because its reference count can increase or decrease without us
+	 * realizing. We cache results only for extent buffers that lead from
+	 * the root node down to the leaf with the file extent item.
+	 */
+	ASSERT(level >= 0);
+
+	entry = &cache->entries[level];
+
+	/* Unused cache entry or being used for some other extent buffer. */
+	if (entry->bytenr != bytenr)
+		return false;
+
+	/*
+	 * We cached a false result, but the last snapshot generation of the
+	 * root changed, so we now have a snapshot. Don't trust the result.
+	 */
+	if (!entry->is_shared &&
+	    entry->gen != btrfs_root_last_snapshot(&root->root_item))
+		return false;
+
+	/*
+	 * If we cached a true result and the last generation used for dropping
+	 * a root changed, we can not trust the result, because the dropped root
+	 * could be a snapshot sharing this extent buffer.
+	 */
+	if (entry->is_shared &&
+	    entry->gen != btrfs_get_last_root_drop_gen(root->fs_info))
+		return false;
+
+	*is_shared = entry->is_shared;
+
+	return true;
+}
+
+/*
+ * The caller has joined a transaction or is holding a read lock on the
+ * fs_info->commit_root_sem semaphore, so no need to worry about the root's last
+ * snapshot field changing while updating or checking the cache.
+ */
+static void store_backref_shared_cache(struct btrfs_backref_shared_cache *cache,
+				       struct btrfs_root *root,
+				       u64 bytenr, int level, bool is_shared)
+{
+	struct btrfs_backref_shared_cache_entry *entry;
+	u64 gen;
+
+	if (WARN_ON_ONCE(level >= BTRFS_MAX_LEVEL))
+		return;
+
+	/*
+	 * Level -1 is used for the data extent, which is not reliable to cache
+	 * because its reference count can increase or decrease without us
+	 * realizing. We cache results only for extent buffers that lead from
+	 * the root node down to the leaf with the file extent item.
+	 */
+	ASSERT(level >= 0);
+
+	if (is_shared)
+		gen = btrfs_get_last_root_drop_gen(root->fs_info);
+	else
+		gen = btrfs_root_last_snapshot(&root->root_item);
+
+	entry = &cache->entries[level];
+	entry->bytenr = bytenr;
+	entry->is_shared = is_shared;
+	entry->gen = gen;
+
+	/*
+	 * If we found an extent buffer is shared, set the cache result for all
+	 * extent buffers below it to true. As nodes in the path are COWed,
+	 * their sharedness is moved to their children, and if a leaf is COWed,
+	 * then the sharedness of a data extent becomes direct, the refcount of
+	 * data extent is increased in the extent item at the extent tree.
+	 */
+	if (is_shared) {
+		for (int i = 0; i < level; i++) {
+			entry = &cache->entries[i];
+			entry->is_shared = is_shared;
+			entry->gen = gen;
+		}
+	}
+}
+
+/*
+ * Check if a data extent is shared or not.
  *
- * @root:   root inode belongs to
- * @inum:   inode number of the inode whose extent we are checking
- * @bytenr: logical bytenr of the extent we are checking
- * @roots:  list of roots this extent is shared among
- * @tmp:    temporary list used for iteration
+ * @root:        The root the inode belongs to.
+ * @inum:        Number of the inode whose extent we are checking.
+ * @bytenr:      Logical bytenr of the extent we are checking.
+ * @extent_gen:  Generation of the extent (file extent item) or 0 if it is
+ *               not known.
+ * @roots:       List of roots this extent is shared among.
+ * @tmp:         Temporary list used for iteration.
+ * @cache:       A backref lookup result cache.
  *
- * btrfs_check_shared uses the backref walking code but will short
+ * btrfs_is_data_extent_shared uses the backref walking code but will short
  * circuit as soon as it finds a root or inode that doesn't match the
  * one passed in. This provides a significant performance benefit for
  * callers (such as fiemap) which want to know whether the extent is
@@ -1531,8 +1633,10 @@ int btrfs_find_all_roots(struct btrfs_trans_handle *trans,
  *
  * Return: 0 if extent is not shared, 1 if it is shared, < 0 on error.
  */
-int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
-		struct ulist *roots, struct ulist *tmp)
+int btrfs_is_data_extent_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
+				u64 extent_gen,
+				struct ulist *roots, struct ulist *tmp,
+				struct btrfs_backref_shared_cache *cache)
 {
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct btrfs_trans_handle *trans;
@@ -1545,6 +1649,7 @@ int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
 		.inum = inum,
 		.share_count = 0,
 	};
+	int level;
 
 	ulist_init(roots);
 	ulist_init(tmp);
@@ -1561,22 +1666,52 @@ int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
 		btrfs_get_tree_mod_seq(fs_info, &elem);
 	}
 
+	/* -1 means we are in the bytenr of the data extent. */
+	level = -1;
 	ULIST_ITER_INIT(&uiter);
 	while (1) {
+		bool is_shared;
+		bool cached;
+
 		ret = find_parent_nodes(trans, fs_info, bytenr, elem.seq, tmp,
 					roots, NULL, &shared, false);
 		if (ret == BACKREF_FOUND_SHARED) {
 			/* this is the only condition under which we return 1 */
 			ret = 1;
+			if (level >= 0)
+				store_backref_shared_cache(cache, root, bytenr,
+							   level, true);
 			break;
 		}
 		if (ret < 0 && ret != -ENOENT)
 			break;
 		ret = 0;
+		/*
+		 * If our data extent is not shared through reflinks and it was
+		 * created in a generation after the last one used to create a
+		 * snapshot of the inode's root, then it can not be shared
+		 * indirectly through subtrees, as that can only happen with
+		 * snapshots. In this case bail out, no need to check for the
+		 * sharedness of extent buffers.
+		 */
+		if (level == -1 &&
+		    extent_gen > btrfs_root_last_snapshot(&root->root_item))
+			break;
+
+		if (level >= 0)
+			store_backref_shared_cache(cache, root, bytenr,
+						   level, false);
 		node = ulist_next(tmp, &uiter);
 		if (!node)
 			break;
 		bytenr = node->val;
+		level++;
+		cached = lookup_backref_shared_cache(cache, root, bytenr, level,
+						     &is_shared);
+		if (cached) {
+			ret = (is_shared ? 1 : 0);
+			break;
+		}
 		shared.share_count = 0;
 		cond_resched();
 	}
@@ -2028,10 +2163,29 @@ out:
 	return ret;
 }
 
+static int build_ino_list(u64 inum, u64 offset, u64 root, void *ctx)
+{
+	struct btrfs_data_container *inodes = ctx;
+	const size_t c = 3 * sizeof(u64);
+
+	if (inodes->bytes_left >= c) {
+		inodes->bytes_left -= c;
+		inodes->val[inodes->elem_cnt] = inum;
+		inodes->val[inodes->elem_cnt + 1] = offset;
+		inodes->val[inodes->elem_cnt + 2] = root;
+		inodes->elem_cnt += 3;
+	} else {
+		inodes->bytes_missing += c - inodes->bytes_left;
+		inodes->bytes_left = 0;
+		inodes->elem_missed += 3;
+	}
+
+	return 0;
+}
+
 int iterate_inodes_from_logical(u64 logical, struct btrfs_fs_info *fs_info,
 				struct btrfs_path *path,
-				iterate_extent_inodes_t *iterate, void *ctx,
-				bool ignore_offset)
+				void *ctx, bool ignore_offset)
 {
 	int ret;
 	u64 extent_item_pos;
@@ -2049,17 +2203,15 @@ int iterate_inodes_from_logical(u64 logical, struct btrfs_fs_info *fs_info,
 	extent_item_pos = logical - found_key.objectid;
 	ret = iterate_extent_inodes(fs_info, found_key.objectid,
 					extent_item_pos, search_commit_root,
-					iterate, ctx, ignore_offset);
+					build_ino_list, ctx, ignore_offset);
 
 	return ret;
 }
 
-typedef int (iterate_irefs_t)(u64 parent, u32 name_len, unsigned long name_off,
-			      struct extent_buffer *eb, void *ctx);
+static int inode_to_path(u64 inum, u32 name_len, unsigned long name_off,
+			 struct extent_buffer *eb, struct inode_fs_paths *ipath);
 
-static int iterate_inode_refs(u64 inum, struct btrfs_root *fs_root,
-			      struct btrfs_path *path,
-			      iterate_irefs_t *iterate, void *ctx)
+static int iterate_inode_refs(u64 inum, struct inode_fs_paths *ipath)
 {
 	int ret = 0;
 	int slot;
@@ -2068,6 +2220,8 @@ static int iterate_inode_refs(u64 inum, struct btrfs_root *fs_root,
 	u32 name_len;
 	u64 parent = 0;
 	int found = 0;
+	struct btrfs_root *fs_root = ipath->fs_root;
+	struct btrfs_path *path = ipath->btrfs_path;
 	struct extent_buffer *eb;
 	struct btrfs_inode_ref *iref;
 	struct btrfs_key found_key;
@@ -2103,8 +2257,8 @@ static int iterate_inode_refs(u64 inum, struct btrfs_root *fs_root,
 				"following ref at offset %u for inode %llu in tree %llu",
 				cur, found_key.objectid,
 				fs_root->root_key.objectid);
-			ret = iterate(parent, name_len,
-				      (unsigned long)(iref + 1), eb, ctx);
+			ret = inode_to_path(parent, name_len,
+				      (unsigned long)(iref + 1), eb, ipath);
 			if (ret)
 				break;
 			len = sizeof(*iref) + name_len;
@@ -2118,15 +2272,15 @@ static int iterate_inode_refs(u64 inum, struct btrfs_root *fs_root,
 	return ret;
 }
 
-static int iterate_inode_extrefs(u64 inum, struct btrfs_root *fs_root,
-				 struct btrfs_path *path,
-				 iterate_irefs_t *iterate, void *ctx)
+static int iterate_inode_extrefs(u64 inum, struct inode_fs_paths *ipath)
 {
 	int ret;
 	int slot;
 	u64 offset = 0;
 	u64 parent;
 	int found = 0;
+	struct btrfs_root *fs_root = ipath->fs_root;
+	struct btrfs_path *path = ipath->btrfs_path;
 	struct extent_buffer *eb;
 	struct btrfs_inode_extref *extref;
 	u32 item_size;
@@ -2162,8 +2316,8 @@ static int iterate_inode_extrefs(u64 inum, struct btrfs_root *fs_root,
 			extref = (struct btrfs_inode_extref *)(ptr + cur_offset);
 			parent = btrfs_inode_extref_parent(eb, extref);
 			name_len = btrfs_inode_extref_name_len(eb, extref);
-			ret = iterate(parent, name_len,
-				      (unsigned long)&extref->name, eb, ctx);
+			ret = inode_to_path(parent, name_len,
+				      (unsigned long)&extref->name, eb, ipath);
 			if (ret)
 				break;
 
@@ -2180,34 +2334,13 @@ static int iterate_inode_extrefs(u64 inum, struct btrfs_root *fs_root,
 	return ret;
 }
 
-static int iterate_irefs(u64 inum, struct btrfs_root *fs_root,
-			 struct btrfs_path *path, iterate_irefs_t *iterate,
-			 void *ctx)
-{
-	int ret;
-	int found_refs = 0;
-
-	ret = iterate_inode_refs(inum, fs_root, path, iterate, ctx);
-	if (!ret)
-		++found_refs;
-	else if (ret != -ENOENT)
-		return ret;
-
-	ret = iterate_inode_extrefs(inum, fs_root, path, iterate, ctx);
-	if (ret == -ENOENT && found_refs)
-		return 0;
-
-	return ret;
-}
-
 /*
  * returns 0 if the path could be dumped (probably truncated)
  * returns <0 in case of an error
  */
 static int inode_to_path(u64 inum, u32 name_len, unsigned long name_off,
-			 struct extent_buffer *eb, void *ctx)
+			 struct extent_buffer *eb, struct inode_fs_paths *ipath)
 {
-	struct inode_fs_paths *ipath = ctx;
 	char *fspath;
 	char *fspath_min;
 	int i = ipath->fspath->elem_cnt;
@@ -2248,8 +2381,20 @@ static int inode_to_path(u64 inum, u32 name_len, unsigned long name_off,
  */
 int paths_from_inode(u64 inum, struct inode_fs_paths *ipath)
 {
-	return iterate_irefs(inum, ipath->fs_root, ipath->btrfs_path,
-			     inode_to_path, ipath);
+	int ret;
+	int found_refs = 0;
+
+	ret = iterate_inode_refs(inum, ipath);
+	if (!ret)
+		++found_refs;
+	else if (ret != -ENOENT)
+		return ret;
+
+	ret = iterate_inode_extrefs(inum, ipath);
+	if (ret == -ENOENT && found_refs)
+		return 0;
+
+	return ret;
 }
 
 struct btrfs_data_container *init_data_container(u32 total_bytes)

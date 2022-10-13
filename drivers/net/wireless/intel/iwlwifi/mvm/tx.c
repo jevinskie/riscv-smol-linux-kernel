@@ -926,7 +926,7 @@ static int iwl_mvm_tx_tso(struct iwl_mvm *mvm, struct sk_buff *skb,
 	 * Take the min of ieee80211 station and mvm station
 	 */
 	max_amsdu_len =
-		min_t(unsigned int, sta->max_amsdu_len,
+		min_t(unsigned int, sta->cur->max_amsdu_len,
 		      iwl_mvm_max_amsdu_size(mvm, sta, tid));
 
 	/*
@@ -1959,7 +1959,7 @@ static void iwl_mvm_tx_reclaim(struct iwl_mvm *mvm, int sta_id, int tid,
 
 		if (mvmsta->vif)
 			chanctx_conf =
-				rcu_dereference(mvmsta->vif->chanctx_conf);
+				rcu_dereference(mvmsta->vif->bss_conf.chanctx_conf);
 
 		if (WARN_ON_ONCE(!chanctx_conf))
 			goto out;

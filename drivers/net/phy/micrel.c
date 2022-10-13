@@ -92,6 +92,15 @@
 #define KSZ9x31_LMD_VCT_DATA_HI_PULSE_MASK	GENMASK(1, 0)
 #define KSZ9x31_LMD_VCT_DATA_MASK		GENMASK(7, 0)
 
+#define KSZPHY_WIRE_PAIR_MASK			0x3
+
+#define LAN8814_CABLE_DIAG			0x12
+#define LAN8814_CABLE_DIAG_STAT_MASK		GENMASK(9, 8)
+#define LAN8814_CABLE_DIAG_VCT_DATA_MASK	GENMASK(7, 0)
+#define LAN8814_PAIR_BIT_SHIFT			12
+
+#define LAN8814_WIRE_PAIR_MASK			0xF
+
 /* Lan8814 general Interrupt control/status reg in GPHY specific block. */
 #define LAN8814_INTC				0x18
 #define LAN8814_INTS				0x1B
@@ -209,6 +218,9 @@
 #define PTP_TSU_INT_STS_PTP_RX_TS_OVRFL_INT_	BIT(1)
 #define PTP_TSU_INT_STS_PTP_RX_TS_EN_		BIT(0)
 
+#define LAN8814_LED_CTRL_1			0x0
+#define LAN8814_LED_CTRL_1_KSZ9031_LED_MODE_	BIT(6)
+
 /* PHY Control 1 */
 #define MII_KSZPHY_CTRL_1			0x1e
 #define KSZ8081_CTRL1_MDIX_STAT			BIT(4)
@@ -254,6 +266,8 @@ static struct kszphy_hw_stat kszphy_hw_stats[] = {
 struct kszphy_type {
 	u32 led_mode_reg;
 	u16 interrupt_level_mask;
+	u16 cable_diag_reg;
+	unsigned long pair_mask;
 	bool has_broadcast_disable;
 	bool has_nand_tree_disable;
 	bool has_rmii_ref_clk_sel;
@@ -306,6 +320,17 @@ struct kszphy_priv {
 	bool rmii_ref_clk_sel;
 	bool rmii_ref_clk_sel_val;
 	u64 stats[ARRAY_SIZE(kszphy_hw_stats)];
+};
+
+static const struct kszphy_type lan8814_type = {
+	.led_mode_reg		= ~LAN8814_LED_CTRL_1,
+	.cable_diag_reg		= LAN8814_CABLE_DIAG,
+	.pair_mask		= LAN8814_WIRE_PAIR_MASK,
+};
+
+static const struct kszphy_type ksz886x_type = {
+	.cable_diag_reg		= KSZ8081_LMD,
+	.pair_mask		= KSZPHY_WIRE_PAIR_MASK,
 };
 
 static const struct kszphy_type ksz8021_type = {
@@ -1643,7 +1668,7 @@ static void kszphy_get_strings(struct phy_device *phydev, u8 *data)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(kszphy_hw_stats); i++) {
-		strlcpy(data + i * ETH_GSTRING_LEN,
+		strscpy(data + i * ETH_GSTRING_LEN,
 			kszphy_hw_stats[i].string, ETH_GSTRING_LEN);
 	}
 }
@@ -1688,6 +1713,30 @@ static int kszphy_suspend(struct phy_device *phydev)
 	return genphy_suspend(phydev);
 }
 
+static void kszphy_parse_led_mode(struct phy_device *phydev)
+{
+	const struct kszphy_type *type = phydev->drv->driver_data;
+	const struct device_node *np = phydev->mdio.dev.of_node;
+	struct kszphy_priv *priv = phydev->priv;
+	int ret;
+
+	if (type && type->led_mode_reg) {
+		ret = of_property_read_u32(np, "micrel,led-mode",
+					   &priv->led_mode);
+
+		if (ret)
+			priv->led_mode = -1;
+
+		if (priv->led_mode > 3) {
+			phydev_err(phydev, "invalid led mode: 0x%02x\n",
+				   priv->led_mode);
+			priv->led_mode = -1;
+		}
+	} else {
+		priv->led_mode = -1;
+	}
+}
+
 static int kszphy_resume(struct phy_device *phydev)
 {
 	int ret;
@@ -1720,7 +1769,6 @@ static int kszphy_probe(struct phy_device *phydev)
 	const struct device_node *np = phydev->mdio.dev.of_node;
 	struct kszphy_priv *priv;
 	struct clk *clk;
-	int ret;
 
 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -1730,20 +1778,7 @@ static int kszphy_probe(struct phy_device *phydev)
 
 	priv->type = type;
 
-	if (type && type->led_mode_reg) {
-		ret = of_property_read_u32(np, "micrel,led-mode",
-				&priv->led_mode);
-		if (ret)
-			priv->led_mode = -1;
-
-		if (priv->led_mode > 3) {
-			phydev_err(phydev, "invalid led mode: 0x%02x\n",
-				   priv->led_mode);
-			priv->led_mode = -1;
-		}
-	} else {
-		priv->led_mode = -1;
-	}
+	kszphy_parse_led_mode(phydev);
 
 	clk = devm_clk_get(&phydev->mdio.dev, "rmii-ref");
 	/* NOTE: clk may be NULL if building without CONFIG_HAVE_CLK */
@@ -1779,6 +1814,17 @@ static int kszphy_probe(struct phy_device *phydev)
 	return 0;
 }
 
+static int lan8814_cable_test_start(struct phy_device *phydev)
+{
+	/* If autoneg is enabled, we won't be able to test cross pair
+	 * short. In this case, the PHY will "detect" a link and
+	 * confuse the internal state machine - disable auto neg here.
+	 * Set the speed to 1000mbit and full duplex.
+	 */
+	return phy_modify(phydev, MII_BMCR, BMCR_ANENABLE | BMCR_SPEED100,
+			  BMCR_SPEED1000 | BMCR_FULLDPLX);
+}
+
 static int ksz886x_cable_test_start(struct phy_device *phydev)
 {
 	if (phydev->dev_flags & MICREL_KSZ8_P1_ERRATA)
@@ -1792,9 +1838,9 @@ static int ksz886x_cable_test_start(struct phy_device *phydev)
 	return phy_clear_bits(phydev, MII_BMCR, BMCR_ANENABLE | BMCR_SPEED100);
 }
 
-static int ksz886x_cable_test_result_trans(u16 status)
+static __always_inline int ksz886x_cable_test_result_trans(u16 status, u16 mask)
 {
-	switch (FIELD_GET(KSZ8081_LMD_STAT_MASK, status)) {
+	switch (FIELD_GET(mask, status)) {
 	case KSZ8081_LMD_STAT_NORMAL:
 		return ETHTOOL_A_CABLE_RESULT_CODE_OK;
 	case KSZ8081_LMD_STAT_SHORT:
@@ -1808,15 +1854,15 @@ static int ksz886x_cable_test_result_trans(u16 status)
 	}
 }
 
-static bool ksz886x_cable_test_failed(u16 status)
+static __always_inline bool ksz886x_cable_test_failed(u16 status, u16 mask)
 {
-	return FIELD_GET(KSZ8081_LMD_STAT_MASK, status) ==
+	return FIELD_GET(mask, status) ==
 		KSZ8081_LMD_STAT_FAIL;
 }
 
-static bool ksz886x_cable_test_fault_length_valid(u16 status)
+static __always_inline bool ksz886x_cable_test_fault_length_valid(u16 status, u16 mask)
 {
-	switch (FIELD_GET(KSZ8081_LMD_STAT_MASK, status)) {
+	switch (FIELD_GET(mask, status)) {
 	case KSZ8081_LMD_STAT_OPEN:
 		fallthrough;
 	case KSZ8081_LMD_STAT_SHORT:
@@ -1825,27 +1871,78 @@ static bool ksz886x_cable_test_fault_length_valid(u16 status)
 	return false;
 }
 
-static int ksz886x_cable_test_fault_length(u16 status)
+static __always_inline int ksz886x_cable_test_fault_length(struct phy_device *phydev,
+							   u16 status, u16 data_mask)
 {
 	int dt;
 
 	/* According to the data sheet the distance to the fault is
-	 * DELTA_TIME * 0.4 meters.
+	 * DELTA_TIME * 0.4 meters for ksz phys.
+	 * (DELTA_TIME - 22) * 0.8 for lan8814 phy.
 	 */
-	dt = FIELD_GET(KSZ8081_LMD_DELTA_TIME_MASK, status);
+	dt = FIELD_GET(data_mask, status);
 
-	return (dt * 400) / 10;
+	if ((phydev->phy_id & MICREL_PHY_ID_MASK) == PHY_ID_LAN8814)
+		return ((dt - 22) * 800) / 10;
+	else
+		return (dt * 400) / 10;
 }
 
 static int ksz886x_cable_test_wait_for_completion(struct phy_device *phydev)
 {
+	const struct kszphy_type *type = phydev->drv->driver_data;
 	int val, ret;
 
-	ret = phy_read_poll_timeout(phydev, KSZ8081_LMD, val,
+	ret = phy_read_poll_timeout(phydev, type->cable_diag_reg, val,
 				    !(val & KSZ8081_LMD_ENABLE_TEST),
 				    30000, 100000, true);
 
 	return ret < 0 ? ret : 0;
+}
+
+static int lan8814_cable_test_one_pair(struct phy_device *phydev, int pair)
+{
+	static const int ethtool_pair[] = { ETHTOOL_A_CABLE_PAIR_A,
+					    ETHTOOL_A_CABLE_PAIR_B,
+					    ETHTOOL_A_CABLE_PAIR_C,
+					    ETHTOOL_A_CABLE_PAIR_D,
+					  };
+	u32 fault_length;
+	int ret;
+	int val;
+
+	val = KSZ8081_LMD_ENABLE_TEST;
+	val = val | (pair << LAN8814_PAIR_BIT_SHIFT);
+
+	ret = phy_write(phydev, LAN8814_CABLE_DIAG, val);
+	if (ret < 0)
+		return ret;
+
+	ret = ksz886x_cable_test_wait_for_completion(phydev);
+	if (ret)
+		return ret;
+
+	val = phy_read(phydev, LAN8814_CABLE_DIAG);
+	if (val < 0)
+		return val;
+
+	if (ksz886x_cable_test_failed(val, LAN8814_CABLE_DIAG_STAT_MASK))
+		return -EAGAIN;
+
+	ret = ethnl_cable_test_result(phydev, ethtool_pair[pair],
+				      ksz886x_cable_test_result_trans(val,
+								      LAN8814_CABLE_DIAG_STAT_MASK
+								      ));
+	if (ret)
+		return ret;
+
+	if (!ksz886x_cable_test_fault_length_valid(val, LAN8814_CABLE_DIAG_STAT_MASK))
+		return 0;
+
+	fault_length = ksz886x_cable_test_fault_length(phydev, val,
+						       LAN8814_CABLE_DIAG_VCT_DATA_MASK);
+
+	return ethnl_cable_test_fault_length(phydev, ethtool_pair[pair], fault_length);
 }
 
 static int ksz886x_cable_test_one_pair(struct phy_device *phydev, int pair)
@@ -1855,6 +1952,7 @@ static int ksz886x_cable_test_one_pair(struct phy_device *phydev, int pair)
 		ETHTOOL_A_CABLE_PAIR_B,
 	};
 	int ret, val, mdix;
+	u32 fault_length;
 
 	/* There is no way to choice the pair, like we do one ksz9031.
 	 * We can workaround this limitation by using the MDI-X functionality.
@@ -1893,25 +1991,27 @@ static int ksz886x_cable_test_one_pair(struct phy_device *phydev, int pair)
 	if (val < 0)
 		return val;
 
-	if (ksz886x_cable_test_failed(val))
+	if (ksz886x_cable_test_failed(val, KSZ8081_LMD_STAT_MASK))
 		return -EAGAIN;
 
 	ret = ethnl_cable_test_result(phydev, ethtool_pair[pair],
-				      ksz886x_cable_test_result_trans(val));
+				      ksz886x_cable_test_result_trans(val, KSZ8081_LMD_STAT_MASK));
 	if (ret)
 		return ret;
 
-	if (!ksz886x_cable_test_fault_length_valid(val))
+	if (!ksz886x_cable_test_fault_length_valid(val, KSZ8081_LMD_STAT_MASK))
 		return 0;
 
-	return ethnl_cable_test_fault_length(phydev, ethtool_pair[pair],
-					     ksz886x_cable_test_fault_length(val));
+	fault_length = ksz886x_cable_test_fault_length(phydev, val, KSZ8081_LMD_DELTA_TIME_MASK);
+
+	return ethnl_cable_test_fault_length(phydev, ethtool_pair[pair], fault_length);
 }
 
 static int ksz886x_cable_test_get_status(struct phy_device *phydev,
 					 bool *finished)
 {
-	unsigned long pair_mask = 0x3;
+	const struct kszphy_type *type = phydev->drv->driver_data;
+	unsigned long pair_mask = type->pair_mask;
 	int retries = 20;
 	int pair, ret;
 
@@ -1920,7 +2020,10 @@ static int ksz886x_cable_test_get_status(struct phy_device *phydev,
 	/* Try harder if link partner is active */
 	while (pair_mask && retries--) {
 		for_each_set_bit(pair, &pair_mask, 4) {
-			ret = ksz886x_cable_test_one_pair(phydev, pair);
+			if (type->cable_diag_reg == LAN8814_CABLE_DIAG)
+				ret = lan8814_cable_test_one_pair(phydev, pair);
+			else
+				ret = ksz886x_cable_test_one_pair(phydev, pair);
 			if (ret == -EAGAIN)
 				continue;
 			if (ret < 0)
@@ -2659,17 +2762,80 @@ static int lan8804_config_init(struct phy_device *phydev)
 	return 0;
 }
 
+static irqreturn_t lan8804_handle_interrupt(struct phy_device *phydev)
+{
+	int status;
+
+	status = phy_read(phydev, LAN8814_INTS);
+	if (status < 0) {
+		phy_error(phydev);
+		return IRQ_NONE;
+	}
+
+	if (status > 0)
+		phy_trigger_machine(phydev);
+
+	return IRQ_HANDLED;
+}
+
+#define LAN8804_OUTPUT_CONTROL			25
+#define LAN8804_OUTPUT_CONTROL_INTR_BUFFER	BIT(14)
+#define LAN8804_CONTROL				31
+#define LAN8804_CONTROL_INTR_POLARITY		BIT(14)
+
+static int lan8804_config_intr(struct phy_device *phydev)
+{
+	int err;
+
+	/* This is an internal PHY of lan966x and is not possible to change the
+	 * polarity on the GIC found in lan966x, therefore change the polarity
+	 * of the interrupt in the PHY from being active low instead of active
+	 * high.
+	 */
+	phy_write(phydev, LAN8804_CONTROL, LAN8804_CONTROL_INTR_POLARITY);
+
+	/* By default interrupt buffer is open-drain in which case the interrupt
+	 * can be active only low. Therefore change the interrupt buffer to be
+	 * push-pull to be able to change interrupt polarity
+	 */
+	phy_write(phydev, LAN8804_OUTPUT_CONTROL,
+		  LAN8804_OUTPUT_CONTROL_INTR_BUFFER);
+
+	if (phydev->interrupts == PHY_INTERRUPT_ENABLED) {
+		err = phy_read(phydev, LAN8814_INTS);
+		if (err < 0)
+			return err;
+
+		err = phy_write(phydev, LAN8814_INTC, LAN8814_INT_LINK);
+		if (err)
+			return err;
+	} else {
+		err = phy_write(phydev, LAN8814_INTC, 0);
+		if (err)
+			return err;
+
+		err = phy_read(phydev, LAN8814_INTS);
+		if (err < 0)
+			return err;
+	}
+
+	return 0;
+}
+
 static irqreturn_t lan8814_handle_interrupt(struct phy_device *phydev)
 {
 	int irq_status, tsu_irq_status;
+	int ret = IRQ_NONE;
 
 	irq_status = phy_read(phydev, LAN8814_INTS);
-	if (irq_status > 0 && (irq_status & LAN8814_INT_LINK))
-		phy_trigger_machine(phydev);
-
 	if (irq_status < 0) {
 		phy_error(phydev);
 		return IRQ_NONE;
+	}
+
+	if (irq_status & LAN8814_INT_LINK) {
+		phy_trigger_machine(phydev);
+		ret = IRQ_HANDLED;
 	}
 
 	while (1) {
@@ -2680,12 +2846,15 @@ static irqreturn_t lan8814_handle_interrupt(struct phy_device *phydev)
 		    (tsu_irq_status & (LAN8814_INTR_STS_REG_1588_TSU0_ |
 				       LAN8814_INTR_STS_REG_1588_TSU1_ |
 				       LAN8814_INTR_STS_REG_1588_TSU2_ |
-				       LAN8814_INTR_STS_REG_1588_TSU3_)))
+				       LAN8814_INTR_STS_REG_1588_TSU3_))) {
 			lan8814_handle_ptp_interrupt(phydev);
-		else
+			ret = IRQ_HANDLED;
+		} else {
 			break;
+		}
 	}
-	return IRQ_HANDLED;
+
+	return ret;
 }
 
 static int lan8814_ack_interrupt(struct phy_device *phydev)
@@ -2712,9 +2881,9 @@ static int lan8814_config_intr(struct phy_device *phydev)
 		if (err)
 			return err;
 
-		err =  phy_write(phydev, LAN8814_INTC, LAN8814_INT_LINK);
+		err = phy_write(phydev, LAN8814_INTC, LAN8814_INT_LINK);
 	} else {
-		err =  phy_write(phydev, LAN8814_INTC, 0);
+		err = phy_write(phydev, LAN8814_INTC, 0);
 		if (err)
 			return err;
 
@@ -2815,8 +2984,23 @@ static int lan8814_ptp_probe_once(struct phy_device *phydev)
 	return 0;
 }
 
+static void lan8814_setup_led(struct phy_device *phydev, int val)
+{
+	int temp;
+
+	temp = lanphy_read_page_reg(phydev, 5, LAN8814_LED_CTRL_1);
+
+	if (val)
+		temp |= LAN8814_LED_CTRL_1_KSZ9031_LED_MODE_;
+	else
+		temp &= ~LAN8814_LED_CTRL_1_KSZ9031_LED_MODE_;
+
+	lanphy_write_page_reg(phydev, 5, LAN8814_LED_CTRL_1, temp);
+}
+
 static int lan8814_config_init(struct phy_device *phydev)
 {
+	struct kszphy_priv *lan8814 = phydev->priv;
 	int val;
 
 	/* Reset the PHY */
@@ -2835,15 +3019,24 @@ static int lan8814_config_init(struct phy_device *phydev)
 	val |= LAN8814_ALIGN_TX_A_B_SWAP;
 	lanphy_write_page_reg(phydev, 2, LAN8814_ALIGN_SWAP, val);
 
+	if (lan8814->led_mode >= 0)
+		lan8814_setup_led(phydev, lan8814->led_mode);
+
 	return 0;
 }
 
+/* It is expected that there will not be any 'lan8814_take_coma_mode'
+ * function called in suspend. Because the GPIO line can be shared, so if one of
+ * the phys goes back in coma mode, then all the other PHYs will go, which is
+ * wrong.
+ */
 static int lan8814_release_coma_mode(struct phy_device *phydev)
 {
 	struct gpio_desc *gpiod;
 
 	gpiod = devm_gpiod_get_optional(&phydev->mdio.dev, "coma-mode",
-					GPIOD_OUT_HIGH_OPEN_DRAIN);
+					GPIOD_OUT_HIGH_OPEN_DRAIN |
+					GPIOD_FLAGS_BIT_NONEXCLUSIVE);
 	if (IS_ERR(gpiod))
 		return PTR_ERR(gpiod);
 
@@ -2855,6 +3048,7 @@ static int lan8814_release_coma_mode(struct phy_device *phydev)
 
 static int lan8814_probe(struct phy_device *phydev)
 {
+	const struct kszphy_type *type = phydev->drv->driver_data;
 	struct kszphy_priv *priv;
 	u16 addr;
 	int err;
@@ -2863,9 +3057,11 @@ static int lan8814_probe(struct phy_device *phydev)
 	if (!priv)
 		return -ENOMEM;
 
-	priv->led_mode = -1;
-
 	phydev->priv = priv;
+
+	priv->type = type;
+
+	kszphy_parse_led_mode(phydev);
 
 	/* Strap-in value for PHY address, below register read gives starting
 	 * phy address value
@@ -3067,7 +3263,9 @@ static struct phy_driver ksphy_driver[] = {
 	.phy_id		= PHY_ID_LAN8814,
 	.phy_id_mask	= MICREL_PHY_ID_MASK,
 	.name		= "Microchip INDY Gigabit Quad PHY",
+	.flags          = PHY_POLL_CABLE_TEST,
 	.config_init	= lan8814_config_init,
+	.driver_data	= &lan8814_type,
 	.probe		= lan8814_probe,
 	.soft_reset	= genphy_soft_reset,
 	.read_status	= ksz9031_read_status,
@@ -3078,6 +3276,8 @@ static struct phy_driver ksphy_driver[] = {
 	.resume		= kszphy_resume,
 	.config_intr	= lan8814_config_intr,
 	.handle_interrupt = lan8814_handle_interrupt,
+	.cable_test_start	= lan8814_cable_test_start,
+	.cable_test_get_status	= ksz886x_cable_test_get_status,
 }, {
 	.phy_id		= PHY_ID_LAN8804,
 	.phy_id_mask	= MICREL_PHY_ID_MASK,
@@ -3092,6 +3292,8 @@ static struct phy_driver ksphy_driver[] = {
 	.get_stats	= kszphy_get_stats,
 	.suspend	= genphy_suspend,
 	.resume		= kszphy_resume,
+	.config_intr	= lan8804_config_intr,
+	.handle_interrupt = lan8804_handle_interrupt,
 }, {
 	.phy_id		= PHY_ID_KSZ9131,
 	.phy_id_mask	= MICREL_PHY_ID_MASK,
@@ -3124,6 +3326,7 @@ static struct phy_driver ksphy_driver[] = {
 	.phy_id		= PHY_ID_KSZ886X,
 	.phy_id_mask	= MICREL_PHY_ID_MASK,
 	.name		= "Micrel KSZ8851 Ethernet MAC or KSZ886X Switch",
+	.driver_data	= &ksz886x_type,
 	/* PHY_BASIC_FEATURES */
 	.flags		= PHY_POLL_CABLE_TEST,
 	.config_init	= kszphy_config_init,
@@ -3146,6 +3349,8 @@ static struct phy_driver ksphy_driver[] = {
 	.name		= "Microchip KSZ9477",
 	/* PHY_GBIT_FEATURES */
 	.config_init	= kszphy_config_init,
+	.config_intr	= kszphy_config_intr,
+	.handle_interrupt = kszphy_handle_interrupt,
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
 } };

@@ -165,7 +165,7 @@ no_valid_dev_replace_entry_found:
 		 */
 		if (btrfs_find_device(fs_info->fs_devices, &args)) {
 			btrfs_err(fs_info,
-			"replace devid present without an active replace item");
+"replace without active item, run 'device scan --forget' on the target device");
 			ret = -EUCLEAN;
 		} else {
 			dev_replace->srcdev = NULL;
@@ -545,10 +545,7 @@ static int mark_block_group_to_copy(struct btrfs_fs_info *fs_info,
 		if (!cache)
 			continue;
 
-		spin_lock(&cache->lock);
-		cache->to_copy = 1;
-		spin_unlock(&cache->lock);
-
+		set_bit(BLOCK_GROUP_FLAG_TO_COPY, &cache->runtime_flags);
 		btrfs_put_block_group(cache);
 	}
 	if (iter_ret < 0)
@@ -577,7 +574,7 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 		return true;
 
 	spin_lock(&cache->lock);
-	if (cache->removed) {
+	if (test_bit(BLOCK_GROUP_FLAG_REMOVED, &cache->runtime_flags)) {
 		spin_unlock(&cache->lock);
 		return true;
 	}
@@ -587,7 +584,8 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 	ASSERT(!IS_ERR(em));
 	map = em->map_lookup;
 
-	num_extents = cur_extent = 0;
+	num_extents = 0;
+	cur_extent = 0;
 	for (i = 0; i < map->num_stripes; i++) {
 		/* We have more device extent to copy */
 		if (srcdev != map->stripes[i].dev)
@@ -609,9 +607,7 @@ bool btrfs_finish_block_group_to_copy(struct btrfs_device *srcdev,
 	}
 
 	/* Last stripe on this device */
-	spin_lock(&cache->lock);
-	cache->to_copy = 0;
-	spin_unlock(&cache->lock);
+	clear_bit(BLOCK_GROUP_FLAG_TO_COPY, &cache->runtime_flags);
 
 	return true;
 }
@@ -1128,8 +1124,7 @@ int btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info)
 		up_write(&dev_replace->rwsem);
 
 		/* Scrub for replace must not be running in suspended state */
-		ret = btrfs_scrub_cancel(fs_info);
-		ASSERT(ret != -ENOTCONN);
+		btrfs_scrub_cancel(fs_info);
 
 		trans = btrfs_start_transaction(root, 0);
 		if (IS_ERR(trans)) {
@@ -1286,11 +1281,6 @@ int __pure btrfs_dev_replace_is_ongoing(struct btrfs_dev_replace *dev_replace)
 		break;
 	}
 	return 1;
-}
-
-void btrfs_bio_counter_inc_noblocked(struct btrfs_fs_info *fs_info)
-{
-	percpu_counter_inc(&fs_info->dev_replace.bio_counter);
 }
 
 void btrfs_bio_counter_sub(struct btrfs_fs_info *fs_info, s64 amount)

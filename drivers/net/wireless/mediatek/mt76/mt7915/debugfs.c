@@ -23,9 +23,9 @@ mt7915_implicit_txbf_set(void *data, u64 val)
 {
 	struct mt7915_dev *dev = data;
 
-	if (test_bit(MT76_STATE_RUNNING, &dev->mphy.state))
-		return -EBUSY;
-
+	/* The existing connected stations shall reconnect to apply
+	 * new implicit txbf configuration.
+	 */
 	dev->ibf = !!val;
 
 	return mt7915_mcu_set_txbf(dev, MT_BF_TYPE_UPDATE);
@@ -976,7 +976,7 @@ mt7915_rf_regval_get(void *data, u64 *val)
 	if (ret)
 		return ret;
 
-	*val = le32_to_cpu(regval);
+	*val = regval;
 
 	return 0;
 }
@@ -985,8 +985,9 @@ static int
 mt7915_rf_regval_set(void *data, u64 val)
 {
 	struct mt7915_dev *dev = data;
+	u32 val32 = val;
 
-	return mt7915_mcu_rf_regval(dev, dev->mt76.debugfs_reg, (u32 *)&val, true);
+	return mt7915_mcu_rf_regval(dev, dev->mt76.debugfs_reg, &val32, true);
 }
 
 DEFINE_DEBUGFS_ATTRIBUTE(fops_rf_regval, mt7915_rf_regval_get,

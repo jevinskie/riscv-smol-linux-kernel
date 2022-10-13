@@ -188,12 +188,16 @@ static int convert_atom_mem_type_to_vram_type(struct amdgpu_device *adev,
 			vram_type = AMDGPU_VRAM_TYPE_DDR3;
 			break;
 		case Ddr4MemType:
-		case LpDdr4MemType:
 			vram_type = AMDGPU_VRAM_TYPE_DDR4;
 			break;
+		case LpDdr4MemType:
+			vram_type = AMDGPU_VRAM_TYPE_LPDDR4;
+			break;
 		case Ddr5MemType:
-		case LpDdr5MemType:
 			vram_type = AMDGPU_VRAM_TYPE_DDR5;
+			break;
+		case LpDdr5MemType:
+			vram_type = AMDGPU_VRAM_TYPE_LPDDR5;
 			break;
 		default:
 			vram_type = AMDGPU_VRAM_TYPE_UNKNOWN;
@@ -310,7 +314,7 @@ amdgpu_atomfirmware_get_vram_info(struct amdgpu_device *adev,
 					mem_channel_number = vram_info->v30.channel_num;
 					mem_channel_width = vram_info->v30.channel_width;
 					if (vram_width)
-						*vram_width = mem_channel_number * mem_channel_width;
+						*vram_width = mem_channel_number * (1 << mem_channel_width);
 					break;
 				default:
 					return -EINVAL;

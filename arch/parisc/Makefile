@@ -18,7 +18,6 @@
 boot := arch/parisc/boot
 KBUILD_IMAGE := $(boot)/bzImage
 
-NM		= sh $(srctree)/arch/parisc/nm
 CHECKFLAGS	+= -D__hppa__=1
 
 ifdef CONFIG_64BIT
@@ -113,8 +112,6 @@ cflags-$(CONFIG_PA7200)		+= -march=1.1 -mschedule=7200
 cflags-$(CONFIG_PA7100LC)	+= -march=1.1 -mschedule=7100LC
 cflags-$(CONFIG_PA7300LC)	+= -march=1.1 -mschedule=7300
 cflags-$(CONFIG_PA8X00)		+= -march=2.0 -mschedule=8000
-
-head-y			:= arch/parisc/kernel/head.o 
 
 KBUILD_CFLAGS	+= $(cflags-y)
 LIBGCC		:= $(shell $(CC) -print-libgcc-file-name)

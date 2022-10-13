@@ -40,11 +40,7 @@ static const char * const btf_kind_str[NR_BTF_KINDS] = {
 	[BTF_KIND_FLOAT]	= "FLOAT",
 	[BTF_KIND_DECL_TAG]	= "DECL_TAG",
 	[BTF_KIND_TYPE_TAG]	= "TYPE_TAG",
-};
-
-struct btf_attach_point {
-	__u32 obj_id;
-	__u32 btf_id;
+	[BTF_KIND_ENUM64]	= "ENUM64",
 };
 
 static const char *btf_int_enc_str(__u8 encoding)
@@ -212,15 +208,18 @@ static int dump_btf_type(const struct btf *btf, __u32 id,
 	case BTF_KIND_ENUM: {
 		const struct btf_enum *v = (const void *)(t + 1);
 		__u16 vlen = BTF_INFO_VLEN(t->info);
+		const char *encoding;
 		int i;
 
+		encoding = btf_kflag(t) ? "SIGNED" : "UNSIGNED";
 		if (json_output) {
+			jsonw_string_field(w, "encoding", encoding);
 			jsonw_uint_field(w, "size", t->size);
 			jsonw_uint_field(w, "vlen", vlen);
 			jsonw_name(w, "values");
 			jsonw_start_array(w);
 		} else {
-			printf(" size=%u vlen=%u", t->size, vlen);
+			printf(" encoding=%s size=%u vlen=%u", encoding, t->size, vlen);
 		}
 		for (i = 0; i < vlen; i++, v++) {
 			const char *name = btf_str(btf, v->name_off);
@@ -228,10 +227,57 @@ static int dump_btf_type(const struct btf *btf, __u32 id,
 			if (json_output) {
 				jsonw_start_object(w);
 				jsonw_string_field(w, "name", name);
-				jsonw_uint_field(w, "val", v->val);
+				if (btf_kflag(t))
+					jsonw_int_field(w, "val", v->val);
+				else
+					jsonw_uint_field(w, "val", v->val);
 				jsonw_end_object(w);
 			} else {
-				printf("\n\t'%s' val=%u", name, v->val);
+				if (btf_kflag(t))
+					printf("\n\t'%s' val=%d", name, v->val);
+				else
+					printf("\n\t'%s' val=%u", name, v->val);
+			}
+		}
+		if (json_output)
+			jsonw_end_array(w);
+		break;
+	}
+	case BTF_KIND_ENUM64: {
+		const struct btf_enum64 *v = btf_enum64(t);
+		__u16 vlen = btf_vlen(t);
+		const char *encoding;
+		int i;
+
+		encoding = btf_kflag(t) ? "SIGNED" : "UNSIGNED";
+		if (json_output) {
+			jsonw_string_field(w, "encoding", encoding);
+			jsonw_uint_field(w, "size", t->size);
+			jsonw_uint_field(w, "vlen", vlen);
+			jsonw_name(w, "values");
+			jsonw_start_array(w);
+		} else {
+			printf(" encoding=%s size=%u vlen=%u", encoding, t->size, vlen);
+		}
+		for (i = 0; i < vlen; i++, v++) {
+			const char *name = btf_str(btf, v->name_off);
+			__u64 val = ((__u64)v->val_hi32 << 32) | v->val_lo32;
+
+			if (json_output) {
+				jsonw_start_object(w);
+				jsonw_string_field(w, "name", name);
+				if (btf_kflag(t))
+					jsonw_int_field(w, "val", val);
+				else
+					jsonw_uint_field(w, "val", val);
+				jsonw_end_object(w);
+			} else {
+				if (btf_kflag(t))
+					printf("\n\t'%s' val=%lldLL", name,
+					       (unsigned long long)val);
+				else
+					printf("\n\t'%s' val=%lluULL", name,
+					       (unsigned long long)val);
 			}
 		}
 		if (json_output)
@@ -589,10 +635,9 @@ static int do_dump(int argc, char **argv)
 
 		btf = btf__parse_split(*argv, base ?: base_btf);
 		err = libbpf_get_error(btf);
-		if (err) {
-			btf = NULL;
+		if (!btf) {
 			p_err("failed to load BTF from %s: %s",
-			      *argv, strerror(err));
+			      *argv, strerror(errno));
 			goto done;
 		}
 		NEXT_ARG();
@@ -637,8 +682,8 @@ static int do_dump(int argc, char **argv)
 
 		btf = btf__load_from_kernel_by_id_split(btf_id, base_btf);
 		err = libbpf_get_error(btf);
-		if (err) {
-			p_err("get btf by id (%u): %s", btf_id, strerror(err));
+		if (!btf) {
+			p_err("get btf by id (%u): %s", btf_id, strerror(errno));
 			goto done;
 		}
 	}
@@ -774,7 +819,7 @@ build_btf_type_table(struct hashmap *tab, enum bpf_obj_type type,
 				      u32_as_hash_field(id));
 		if (err) {
 			p_err("failed to append entry to hashmap for BTF ID %u, object ID %u: %s",
-			      btf_id, id, strerror(errno));
+			      btf_id, id, strerror(-err));
 			goto err_free;
 		}
 	}

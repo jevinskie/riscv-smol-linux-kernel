@@ -66,6 +66,8 @@ xfs_bulkstat_one_int(
 	struct xfs_bulkstat	*buf = bc->buf;
 	xfs_extnum_t		nextents;
 	int			error = -EINVAL;
+	vfsuid_t		vfsuid;
+	vfsgid_t		vfsgid;
 
 	if (xfs_internal_inum(mp, ino))
 		goto out_advance;
@@ -81,14 +83,16 @@ xfs_bulkstat_one_int(
 	ASSERT(ip != NULL);
 	ASSERT(ip->i_imap.im_blkno != 0);
 	inode = VFS_I(ip);
+	vfsuid = i_uid_into_vfsuid(mnt_userns, inode);
+	vfsgid = i_gid_into_vfsgid(mnt_userns, inode);
 
 	/* xfs_iget returns the following without needing
 	 * further change.
 	 */
 	buf->bs_projectid = ip->i_projid;
 	buf->bs_ino = ino;
-	buf->bs_uid = from_kuid(sb_userns, i_uid_into_mnt(mnt_userns, inode));
-	buf->bs_gid = from_kgid(sb_userns, i_gid_into_mnt(mnt_userns, inode));
+	buf->bs_uid = from_kuid(sb_userns, vfsuid_into_kuid(vfsuid));
+	buf->bs_gid = from_kgid(sb_userns, vfsgid_into_kgid(vfsgid));
 	buf->bs_size = ip->i_disk_size;
 
 	buf->bs_nlink = inode->i_nlink;
@@ -111,8 +115,8 @@ xfs_bulkstat_one_int(
 		buf->bs_extents64 = nextents;
 
 	xfs_bulkstat_health(ip, buf);
-	buf->bs_aextents = xfs_ifork_nextents(ip->i_afp);
-	buf->bs_forkoff = XFS_IFORK_BOFF(ip);
+	buf->bs_aextents = xfs_ifork_nextents(&ip->i_af);
+	buf->bs_forkoff = xfs_inode_fork_boff(ip);
 	buf->bs_version = XFS_BULKSTAT_VERSION_V5;
 
 	if (xfs_has_v3inodes(mp)) {

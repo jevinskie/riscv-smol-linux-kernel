@@ -57,12 +57,15 @@ enum {
 #define BITMAP_LAST_BYTE_MASK(nbits) \
 	(BYTE_MASK >> (-(nbits) & (BITS_PER_BYTE - 1)))
 
+struct btrfs_bio;
 struct btrfs_root;
 struct btrfs_inode;
-struct btrfs_io_bio;
 struct btrfs_fs_info;
 struct io_failure_record;
 struct extent_io_tree;
+
+int __init extent_buffer_init_cachep(void);
+void __cold extent_buffer_free_cachep(void);
 
 typedef void (submit_bio_hook_t)(struct inode *inode, struct bio *bio,
 					 int mirror_num,
@@ -142,15 +145,10 @@ static inline void extent_changeset_free(struct extent_changeset *changeset)
 
 struct extent_map_tree;
 
-typedef struct extent_map *(get_extent_t)(struct btrfs_inode *inode,
-					  struct page *page, size_t pg_offset,
-					  u64 start, u64 len);
-
 int try_release_extent_mapping(struct page *page, gfp_t mask);
 int try_release_extent_buffer(struct page *page);
 
 int btrfs_read_folio(struct file *file, struct folio *folio);
-int extent_write_full_page(struct page *page, struct writeback_control *wbc);
 int extent_write_locked_range(struct inode *inode, u64 start, u64 end);
 int extent_writepages(struct address_space *mapping,
 		      struct writeback_control *wbc);
@@ -244,11 +242,10 @@ void extent_range_redirty_for_io(struct inode *inode, u64 start, u64 end);
 void extent_clear_unlock_delalloc(struct btrfs_inode *inode, u64 start, u64 end,
 				  struct page *locked_page,
 				  u32 bits_to_clear, unsigned long page_ops);
+int extent_invalidate_folio(struct extent_io_tree *tree,
+			    struct folio *folio, size_t offset);
 
 int btrfs_alloc_page_array(unsigned int nr_pages, struct page **page_array);
-struct bio *btrfs_bio_alloc(unsigned int nr_iovecs);
-struct bio *btrfs_bio_clone(struct block_device *bdev, struct bio *bio);
-struct bio *btrfs_bio_clone_partial(struct bio *orig, u64 offset, u64 size);
 
 void end_extent_writepage(struct page *page, int err, u64 start, u64 end);
 int btrfs_repair_eb_io_failure(const struct extent_buffer *eb, int mirror_num);
@@ -262,20 +259,25 @@ int btrfs_repair_eb_io_failure(const struct extent_buffer *eb, int mirror_num);
  * bio end_io callback is called to indicate things have failed.
  */
 struct io_failure_record {
+	/* Use rb_simple_node for search/insert */
+	struct {
+		struct rb_node rb_node;
+		u64 bytenr;
+	};
 	struct page *page;
-	u64 start;
 	u64 len;
 	u64 logical;
-	enum btrfs_compression_type compress_type;
 	int this_mirror;
 	int failed_mirror;
+	int num_copies;
 };
 
-int btrfs_repair_one_sector(struct inode *inode,
-			    struct bio *failed_bio, u32 bio_offset,
-			    struct page *page, unsigned int pgoff,
-			    u64 start, int failed_mirror,
+int btrfs_repair_one_sector(struct inode *inode, struct btrfs_bio *failed_bbio,
+			    u32 bio_offset, struct page *page, unsigned int pgoff,
 			    submit_bio_hook_t *submit_bio_hook);
+void btrfs_free_io_failure_record(struct btrfs_inode *inode, u64 start, u64 end);
+int btrfs_clean_io_failure(struct btrfs_inode *inode, u64 start,
+			   struct page *page, unsigned int pg_offset);
 
 #ifdef CONFIG_BTRFS_FS_RUN_SANITY_TESTS
 bool find_lock_delalloc_range(struct inode *inode,

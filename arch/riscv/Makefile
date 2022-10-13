@@ -61,7 +61,15 @@ riscv-march-$(CONFIG_RISCV_ISA_C)	:= $(riscv-march-y)c
 toolchain-need-zicsr-zifencei := $(call cc-option-yn, -march=$(riscv-march-y)_zicsr_zifencei)
 riscv-march-$(toolchain-need-zicsr-zifencei) := $(riscv-march-y)_zicsr_zifencei
 
-# HACK: kernel probably wants soft-float so they dont accidentially
+# Check if the toolchain supports Zicbom extension
+toolchain-supports-zicbom := $(call cc-option-yn, -march=$(riscv-march-y)_zicbom)
+riscv-march-$(toolchain-supports-zicbom) := $(riscv-march-y)_zicbom
+
+# Check if the toolchain supports Zihintpause extension
+toolchain-supports-zihintpause := $(call cc-option-yn, -march=$(riscv-march-y)_zihintpause)
+riscv-march-$(toolchain-supports-zihintpause) := $(riscv-march-y)_zihintpause
+
+# HACK: kernel probably wants soft-float so they don't accidentially
 # trample on FPU context? But it allows -msave-restore for now
 # KBUILD_CFLAGS += -march=$(subst fd,,$(riscv-march-y))
 KBUILD_AFLAGS += -march=$(riscv-march-y)
@@ -82,6 +90,7 @@ ifeq ($(CONFIG_PERF_EVENTS),y)
 endif
 
 KBUILD_CFLAGS_MODULE += $(call cc-option,-mno-relax)
+KBUILD_AFLAGS_MODULE += $(call as-option,-Wa$(comma)-mno-relax)
 
 # GCC versions that support the "-mstrict-align" option default to allowing
 # unaligned accesses.  While unaligned accesses are explicitly allowed in the
@@ -112,11 +121,6 @@ else
 KBUILD_IMAGE	:= $(boot)/Image.gz
 endif
 
-head-y := arch/riscv/kernel/head.o
-
-core-y += arch/riscv/errata/
-core-$(CONFIG_KVM) += arch/riscv/kvm/
-
 libs-y += arch/riscv/lib/
 libs-$(CONFIG_EFI_STUB) += $(objtree)/drivers/firmware/efi/libstub/lib.a
 
@@ -124,7 +128,7 @@ PHONY += vdso_install
 vdso_install:
 	$(Q)$(MAKE) $(build)=arch/riscv/kernel/vdso $@
 	$(if $(CONFIG_COMPAT),$(Q)$(MAKE) \
-		$(build)=arch/riscv/kernel/compat_vdso $@)
+		$(build)=arch/riscv/kernel/compat_vdso compat_$@)
 
 ifeq ($(KBUILD_EXTMOD),)
 ifeq ($(CONFIG_MMU),y)
@@ -141,10 +145,14 @@ ifneq ($(CONFIG_XIP_KERNEL),y)
 ifeq ($(CONFIG_RISCV_M_MODE)$(CONFIG_SOC_CANAAN),yy)
 KBUILD_IMAGE := $(boot)/loader.bin
 else
+ifeq ($(CONFIG_EFI_ZBOOT),)
 KBUILD_IMAGE := $(boot)/Image.gz
+else
+KBUILD_IMAGE := $(boot)/vmlinuz.efi
 endif
 endif
-BOOT_TARGETS := Image Image.gz loader loader.bin xipImage
+endif
+BOOT_TARGETS := Image Image.gz loader loader.bin xipImage vmlinuz.efi
 
 all:	$(notdir $(KBUILD_IMAGE))
 

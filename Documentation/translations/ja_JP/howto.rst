@@ -129,8 +129,8 @@ linux-api@vger.kernel.org に送ることを勧めます。
     ルに従っているものだけを受け付け、多くの人は正しいスタイルのコード
     だけをレビューします。
 
-  :ref:`Documentation/process/submitting-patches.rst <codingstyle>` と :ref:`Documentation/process/submitting-drivers.rst <submittingdrivers>`
-    これらのファイルには、どうやってうまくパッチを作って投稿するかにつ
+  :ref:`Documentation/process/submitting-patches.rst <codingstyle>`
+    このファイルには、どうやってうまくパッチを作って投稿するかにつ
     いて非常に詳しく書かれており、以下を含みます (これだけに限らない
     けれども)
 
@@ -410,7 +410,7 @@ https://bugzilla.kernel.org に行ってください。もし今後のバグレ�
 このメーリングリストのアーカイブは web 上の多数の場所に存在します。こ
 れらのアーカイブを探すにはサーチエンジンを使いましょう。例えば-
 
-	http://dir.gmane.org/gmane.linux.kernel
+	https://lore.kernel.org/lkml/
 
 リストに投稿する前にすでにその話題がアーカイブに存在するかどうかを検索
 することを是非やってください。多数の事がすでに詳細に渡って議論されてお

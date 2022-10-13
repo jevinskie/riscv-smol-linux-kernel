@@ -1338,16 +1338,18 @@ static int stm32_gpiolib_register_bank(struct stm32_pinctrl *pctl, struct fwnode
 	bank->secure_control = pctl->match_data->secure_control;
 	spin_lock_init(&bank->lock);
 
-	/* create irq hierarchical domain */
-	bank->fwnode = fwnode;
+	if (pctl->domain) {
+		/* create irq hierarchical domain */
+		bank->fwnode = fwnode;
 
-	bank->domain = irq_domain_create_hierarchy(pctl->domain, 0,
-					STM32_GPIO_IRQ_LINE, bank->fwnode,
-					&stm32_gpio_domain_ops, bank);
+		bank->domain = irq_domain_create_hierarchy(pctl->domain, 0, STM32_GPIO_IRQ_LINE,
+							   bank->fwnode, &stm32_gpio_domain_ops,
+							   bank);
 
-	if (!bank->domain) {
-		err = -ENODEV;
-		goto err_clk;
+		if (!bank->domain) {
+			err = -ENODEV;
+			goto err_clk;
+		}
 	}
 
 	err = gpiochip_add_data(&bank->gpio_chip, bank);
@@ -1510,6 +1512,8 @@ int stm32_pctl_probe(struct platform_device *pdev)
 	pctl->domain = stm32_pctrl_get_irq_domain(pdev);
 	if (IS_ERR(pctl->domain))
 		return PTR_ERR(pctl->domain);
+	if (!pctl->domain)
+		dev_warn(dev, "pinctrl without interrupt support\n");
 
 	/* hwspinlock is optional */
 	hwlock_id = of_hwspin_lock_get_id(pdev->dev.of_node, 0);
@@ -1599,10 +1603,9 @@ int stm32_pctl_probe(struct platform_device *pdev)
 
 		bank->clk = of_clk_get_by_name(np, NULL);
 		if (IS_ERR(bank->clk)) {
-			if (PTR_ERR(bank->clk) != -EPROBE_DEFER)
-				dev_err(dev, "failed to get clk (%ld)\n", PTR_ERR(bank->clk));
 			fwnode_handle_put(child);
-			return PTR_ERR(bank->clk);
+			return dev_err_probe(dev, PTR_ERR(bank->clk),
+					     "failed to get clk\n");
 		}
 		i++;
 	}

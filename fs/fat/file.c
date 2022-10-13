@@ -90,7 +90,8 @@ static int fat_ioctl_set_attributes(struct file *file, u32 __user *user_attr)
 	 * out the RO attribute for checking by the security
 	 * module, just because it maps to a file mode.
 	 */
-	err = security_inode_setattr(file->f_path.dentry, &ia);
+	err = security_inode_setattr(file_mnt_user_ns(file),
+				     file->f_path.dentry, &ia);
 	if (err)
 		goto out_unlock_inode;
 
@@ -460,8 +461,9 @@ static int fat_allow_set_time(struct user_namespace *mnt_userns,
 {
 	umode_t allow_utime = sbi->options.allow_utime;
 
-	if (!uid_eq(current_fsuid(), i_uid_into_mnt(mnt_userns, inode))) {
-		if (in_group_p(i_gid_into_mnt(mnt_userns, inode)))
+	if (!vfsuid_eq_kuid(i_uid_into_vfsuid(mnt_userns, inode),
+			    current_fsuid())) {
+		if (vfsgid_in_group_p(i_gid_into_vfsgid(mnt_userns, inode)))
 			allow_utime >>= 3;
 		if (allow_utime & MAY_WRITE)
 			return 1;
@@ -516,9 +518,11 @@ int fat_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 	}
 
 	if (((attr->ia_valid & ATTR_UID) &&
-	     (!uid_eq(attr->ia_uid, sbi->options.fs_uid))) ||
+	     (!uid_eq(from_vfsuid(mnt_userns, i_user_ns(inode), attr->ia_vfsuid),
+		      sbi->options.fs_uid))) ||
 	    ((attr->ia_valid & ATTR_GID) &&
-	     (!gid_eq(attr->ia_gid, sbi->options.fs_gid))) ||
+	     (!gid_eq(from_vfsgid(mnt_userns, i_user_ns(inode), attr->ia_vfsgid),
+		      sbi->options.fs_gid))) ||
 	    ((attr->ia_valid & ATTR_MODE) &&
 	     (attr->ia_mode & ~FAT_VALID_MODE)))
 		error = -EPERM;

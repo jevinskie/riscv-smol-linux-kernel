@@ -89,6 +89,8 @@ void ice_vsi_free_tx_rings(struct ice_vsi *vsi);
 
 void ice_vsi_manage_rss_lut(struct ice_vsi *vsi, bool ena);
 
+void ice_vsi_cfg_crc_strip(struct ice_vsi *vsi, bool disable);
+
 void ice_update_tx_ring_stats(struct ice_tx_ring *ring, u64 pkts, u64 bytes);
 
 void ice_update_rx_ring_stats(struct ice_rx_ring *ring, u64 pkts, u64 bytes);
@@ -102,13 +104,10 @@ int ice_vsi_cfg_mac_fltr(struct ice_vsi *vsi, const u8 *macaddr, bool set);
 
 bool ice_is_safe_mode(struct ice_pf *pf);
 bool ice_is_rdma_ena(struct ice_pf *pf);
-bool ice_is_dflt_vsi_in_use(struct ice_sw *sw);
-
-bool ice_is_vsi_dflt_vsi(struct ice_sw *sw, struct ice_vsi *vsi);
-
-int ice_set_dflt_vsi(struct ice_sw *sw, struct ice_vsi *vsi);
-
-int ice_clear_dflt_vsi(struct ice_sw *sw);
+bool ice_is_dflt_vsi_in_use(struct ice_port_info *pi);
+bool ice_is_vsi_dflt_vsi(struct ice_vsi *vsi);
+int ice_set_dflt_vsi(struct ice_vsi *vsi);
+int ice_clear_dflt_vsi(struct ice_vsi *vsi);
 int ice_set_min_bw_limit(struct ice_vsi *vsi, u64 min_tx_rate);
 int ice_set_max_bw_limit(struct ice_vsi *vsi, u64 max_tx_rate);
 int ice_get_link_speed_kbps(struct ice_vsi *vsi);

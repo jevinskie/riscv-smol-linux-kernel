@@ -101,7 +101,8 @@ static int rtw_ops_config(struct ieee80211_hw *hw, u32 changed)
 		rtw_set_channel(rtwdev);
 
 	if ((changed & IEEE80211_CONF_CHANGE_IDLE) &&
-	    (hw->conf.flags & IEEE80211_CONF_IDLE))
+	    (hw->conf.flags & IEEE80211_CONF_IDLE) &&
+	    !test_bit(RTW_FLAG_SCANNING, rtwdev->flags))
 		rtw_enter_ips(rtwdev);
 
 out:
@@ -355,7 +356,7 @@ static void rtw_conf_tx(struct rtw_dev *rtwdev,
 static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 				     struct ieee80211_vif *vif,
 				     struct ieee80211_bss_conf *conf,
-				     u32 changed)
+				     u64 changed)
 {
 	struct rtw_dev *rtwdev = hw->priv;
 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
@@ -369,15 +370,14 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 
 	if (changed & BSS_CHANGED_ASSOC) {
 		rtw_vif_assoc_changed(rtwvif, conf);
-		if (conf->assoc) {
+		if (vif->cfg.assoc) {
 			rtw_coex_connect_notify(rtwdev, COEX_ASSOCIATE_FINISH);
 
 			rtw_fw_download_rsvd_page(rtwdev);
 			rtw_send_rsvd_page_h2c(rtwdev);
-			rtw_coex_media_status_notify(rtwdev, conf->assoc);
+			rtw_coex_media_status_notify(rtwdev, vif->cfg.assoc);
 			if (rtw_bf_support)
 				rtw_bf_assoc(rtwdev, vif, conf);
-			rtw_store_op_chan(rtwdev);
 		} else {
 			rtw_leave_lps(rtwdev);
 			rtw_bf_disassoc(rtwdev, vif, conf);
@@ -395,6 +395,10 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 	if (changed & BSS_CHANGED_BSSID) {
 		ether_addr_copy(rtwvif->bssid, conf->bssid);
 		config |= PORT_SET_BSSID;
+		if (is_zero_ether_addr(rtwvif->bssid))
+			rtw_clear_op_chan(rtwdev);
+		else
+			rtw_store_op_chan(rtwdev, true);
 	}
 
 	if (changed & BSS_CHANGED_BEACON_INT) {
@@ -429,10 +433,12 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
 	mutex_unlock(&rtwdev->mutex);
 }
 
-static int rtw_ops_start_ap(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+static int rtw_ops_start_ap(struct ieee80211_hw *hw,
+			    struct ieee80211_vif *vif,
+			    struct ieee80211_bss_conf *link_conf)
 {
 	struct rtw_dev *rtwdev = hw->priv;
-	struct rtw_chip_info *chip = rtwdev->chip;
+	const struct rtw_chip_info *chip = rtwdev->chip;
 
 	mutex_lock(&rtwdev->mutex);
 	chip->ops->phy_calibration(rtwdev);
@@ -442,7 +448,8 @@ static int rtw_ops_start_ap(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
 }
 
 static int rtw_ops_conf_tx(struct ieee80211_hw *hw,
-			   struct ieee80211_vif *vif, u16 ac,
+			   struct ieee80211_vif *vif,
+			   unsigned int link_id, u16 ac,
 			   const struct ieee80211_tx_queue_params *params)
 {
 	struct rtw_dev *rtwdev = hw->priv;
@@ -749,7 +756,7 @@ static int rtw_ops_set_antenna(struct ieee80211_hw *hw,
 			       u32 rx_antenna)
 {
 	struct rtw_dev *rtwdev = hw->priv;
-	struct rtw_chip_info *chip = rtwdev->chip;
+	const struct rtw_chip_info *chip = rtwdev->chip;
 	int ret;
 
 	if (!chip->ops->set_antenna)
@@ -869,7 +876,9 @@ static int rtw_ops_set_sar_specs(struct ieee80211_hw *hw,
 {
 	struct rtw_dev *rtwdev = hw->priv;
 
+	mutex_lock(&rtwdev->mutex);
 	rtw_set_sar_specs(rtwdev, sar);
+	mutex_unlock(&rtwdev->mutex);
 
 	return 0;
 }

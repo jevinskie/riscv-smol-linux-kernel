@@ -30,11 +30,11 @@ void rtw_bf_disassoc(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
 void rtw_bf_assoc(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
 		  struct ieee80211_bss_conf *bss_conf)
 {
+	const struct rtw_chip_info *chip = rtwdev->chip;
 	struct ieee80211_hw *hw = rtwdev->hw;
 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
 	struct rtw_bfee *bfee = &rtwvif->bfee;
 	struct rtw_bf_info *bfinfo = &rtwdev->bf_info;
-	struct rtw_chip_info *chip = rtwdev->chip;
 	struct ieee80211_sta *sta;
 	struct ieee80211_sta_vht_cap *vht_cap;
 	struct ieee80211_sta_vht_cap *ic_vht_cap;
@@ -67,7 +67,7 @@ void rtw_bf_assoc(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
 		ether_addr_copy(bfee->mac_addr, bssid);
 		bfee->role = RTW_BFEE_MU;
 		bfee->p_aid = (bssid[5] << 1) | (bssid[4] >> 7);
-		bfee->aid = bss_conf->aid;
+		bfee->aid = vif->cfg.aid;
 		bfinfo->bfer_mu_cnt++;
 
 		rtw_chip_config_bfee(rtwdev, rtwvif, bfee, true);

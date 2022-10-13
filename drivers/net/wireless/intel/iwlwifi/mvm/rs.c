@@ -138,7 +138,7 @@ static bool rs_mimo_allow(struct iwl_mvm *mvm, struct ieee80211_sta *sta,
 	if (!sta->deflink.ht_cap.ht_supported)
 		return false;
 
-	if (sta->smps_mode == IEEE80211_SMPS_STATIC)
+	if (sta->deflink.smps_mode == IEEE80211_SMPS_STATIC)
 		return false;
 
 	if (num_of_ant(iwl_mvm_get_valid_tx_ant(mvm)) < 2)
@@ -1491,7 +1491,7 @@ static void rs_set_amsdu_len(struct iwl_mvm *mvm, struct ieee80211_sta *sta,
 	struct iwl_mvm_sta *mvmsta = iwl_mvm_sta_from_mac80211(sta);
 	int i;
 
-	sta->max_amsdu_len = rs_fw_get_max_amsdu_len(sta);
+	sta->deflink.agg.max_amsdu_len = rs_fw_get_max_amsdu_len(sta);
 
 	/*
 	 * In case TLC offload is not active amsdu_enabled is either 0xFFFF
@@ -1506,22 +1506,23 @@ static void rs_set_amsdu_len(struct iwl_mvm *mvm, struct ieee80211_sta *sta,
 
 	if (mvmsta->vif->bss_conf.he_support &&
 	    !iwlwifi_mod_params.disable_11ax)
-		mvmsta->max_amsdu_len = sta->max_amsdu_len;
+		mvmsta->max_amsdu_len = sta->deflink.agg.max_amsdu_len;
 	else
-		mvmsta->max_amsdu_len = min_t(int, sta->max_amsdu_len, 8500);
+		mvmsta->max_amsdu_len =
+			min_t(int, sta->deflink.agg.max_amsdu_len, 8500);
 
-	sta->max_rc_amsdu_len = mvmsta->max_amsdu_len;
+	sta->deflink.agg.max_rc_amsdu_len = mvmsta->max_amsdu_len;
 
 	for (i = 0; i < IWL_MAX_TID_COUNT; i++) {
 		if (mvmsta->amsdu_enabled)
-			sta->max_tid_amsdu_len[i] =
+			sta->deflink.agg.max_tid_amsdu_len[i] =
 				iwl_mvm_max_amsdu_size(mvm, sta, i);
 		else
 			/*
 			 * Not so elegant, but this will effectively
 			 * prevent AMSDU on this TID
 			 */
-			sta->max_tid_amsdu_len[i] = 1;
+			sta->deflink.agg.max_tid_amsdu_len[i] = 1;
 	}
 }
 
@@ -1861,7 +1862,7 @@ static bool rs_tpc_allowed(struct iwl_mvm *mvm, struct ieee80211_vif *vif,
 	int index = rate->index;
 	bool cam = (iwlmvm_mod_params.power_scheme == IWL_POWER_SCHEME_CAM);
 	bool sta_ps_disabled = (vif->type == NL80211_IFTYPE_STATION &&
-				!vif->bss_conf.ps);
+				!vif->cfg.ps);
 
 	IWL_DEBUG_RATE(mvm, "cam: %d sta_ps_disabled %d\n",
 		       cam, sta_ps_disabled);
@@ -1980,7 +1981,7 @@ static bool rs_tpc_perform(struct iwl_mvm *mvm,
 #endif
 
 	rcu_read_lock();
-	chanctx_conf = rcu_dereference(vif->chanctx_conf);
+	chanctx_conf = rcu_dereference(vif->bss_conf.chanctx_conf);
 	if (WARN_ON(!chanctx_conf))
 		band = NUM_NL80211_BANDS;
 	else
@@ -2933,7 +2934,7 @@ static void rs_drv_rate_init(struct iwl_mvm *mvm, struct ieee80211_sta *sta,
 
 	lq_sta->lq.sta_id = mvmsta->sta_id;
 	mvmsta->amsdu_enabled = 0;
-	mvmsta->max_amsdu_len = sta->max_amsdu_len;
+	mvmsta->max_amsdu_len = sta->cur->max_amsdu_len;
 
 	for (j = 0; j < LQ_SIZE; j++)
 		rs_rate_scale_clear_tbl_windows(mvm, &lq_sta->lq_info[j]);

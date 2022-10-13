@@ -206,7 +206,7 @@ isp_video_remote_subdev(struct isp_video *video, u32 *pad)
 {
 	struct media_pad *remote;
 
-	remote = media_entity_remote_pad(&video->pad);
+	remote = media_pad_remote_pad_first(&video->pad);
 
 	if (!remote || !is_media_entity_v4l2_subdev(remote->entity))
 		return NULL;
@@ -981,7 +981,7 @@ static int isp_video_check_external_subdevs(struct isp_video *video,
 			continue;
 
 		/* ISP entities have always sink pad == 0. Find source. */
-		source_pad = media_entity_remote_pad(&ents[i]->pads[0]);
+		source_pad = media_pad_remote_pad_first(&ents[i]->pads[0]);
 		if (source_pad == NULL)
 			continue;
 
@@ -1071,7 +1071,7 @@ static int isp_video_check_external_subdevs(struct isp_video *video,
  * processing might be possible but requires more testing.
  *
  * Stream start must be delayed until buffers are available at both the input
- * and output. The pipeline must be started in the videobuf queue callback with
+ * and output. The pipeline must be started in the vb2 queue callback with
  * the buffers queue spinlock held. The modules subdev set stream operation must
  * not sleep.
  */

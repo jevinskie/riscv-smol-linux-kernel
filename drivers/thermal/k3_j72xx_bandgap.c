@@ -151,8 +151,6 @@ static int prep_lookup_table(struct err_values *err_vals, int *ref_table)
 		/* 300 milli celsius steps */
 		while (i--)
 			derived_table[i] = derived_table[i + 1] - 300;
-		/* case 0 */
-		derived_table[i] = derived_table[i + 1] - 300;
 	}
 
 	/*
@@ -249,9 +247,9 @@ static inline int k3_bgp_read_temp(struct k3_thermal_data *devdata,
 }
 
 /* Get temperature callback function for thermal zone */
-static int k3_thermal_get_temp(void *devdata, int *temp)
+static int k3_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
 {
-	struct k3_thermal_data *data = devdata;
+	struct k3_thermal_data *data = tz->devdata;
 	int ret = 0;
 
 	ret = k3_bgp_read_temp(data, temp);
@@ -261,7 +259,7 @@ static int k3_thermal_get_temp(void *devdata, int *temp)
 	return ret;
 }
 
-static const struct thermal_zone_of_device_ops k3_of_thermal_ops = {
+static const struct thermal_zone_device_ops k3_of_thermal_ops = {
 	.get_temp = k3_thermal_get_temp,
 };
 
@@ -433,7 +431,7 @@ static int k3_j72xx_bandgap_probe(struct platform_device *pdev)
 				     GFP_KERNEL);
 	if (!derived_table) {
 		ret = -ENOMEM;
-		goto err_alloc;
+		goto err_free_ref_table;
 	}
 
 	/* Workaround not needed if bit30/bit31 is set even for J721e */
@@ -476,14 +474,12 @@ static int k3_j72xx_bandgap_probe(struct platform_device *pdev)
 		writel(val, data[id].bgp->cfg2_base + data[id].ctrl_offset);
 
 		bgp->ts_data[id] = &data[id];
-		ti_thermal =
-		devm_thermal_zone_of_sensor_register(bgp->dev, id,
-						     &data[id],
-						     &k3_of_thermal_ops);
+		ti_thermal = devm_thermal_of_zone_register(bgp->dev, id, &data[id],
+							   &k3_of_thermal_ops);
 		if (IS_ERR(ti_thermal)) {
 			dev_err(bgp->dev, "thermal zone device is NULL\n");
 			ret = PTR_ERR(ti_thermal);
-			goto err_alloc;
+			goto err_free_ref_table;
 		}
 	}
 
@@ -514,6 +510,9 @@ static int k3_j72xx_bandgap_probe(struct platform_device *pdev)
 
 	return 0;
 
+err_free_ref_table:
+	kfree(ref_table);
+
 err_alloc:
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
@@ -529,11 +528,11 @@ static int k3_j72xx_bandgap_remove(struct platform_device *pdev)
 	return 0;
 }
 
-const struct k3_j72xx_bandgap_data k3_j72xx_bandgap_j721e_data = {
+static const struct k3_j72xx_bandgap_data k3_j72xx_bandgap_j721e_data = {
 	.has_errata_i2128 = 1,
 };
 
-const struct k3_j72xx_bandgap_data k3_j72xx_bandgap_j7200_data = {
+static const struct k3_j72xx_bandgap_data k3_j72xx_bandgap_j7200_data = {
 	.has_errata_i2128 = 0,
 };
 

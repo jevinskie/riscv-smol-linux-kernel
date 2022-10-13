@@ -50,7 +50,7 @@ cifs_build_path_to_root(struct smb3_fs_context *ctx, struct cifs_sb_info *cifs_s
 	}
 
 	if (add_treename)
-		dfsplen = strnlen(tcon->treeName, MAX_TREE_SIZE + 1);
+		dfsplen = strnlen(tcon->tree_name, MAX_TREE_SIZE + 1);
 	else
 		dfsplen = 0;
 
@@ -59,7 +59,7 @@ cifs_build_path_to_root(struct smb3_fs_context *ctx, struct cifs_sb_info *cifs_s
 		return full_path;
 
 	if (dfsplen)
-		memcpy(full_path, tcon->treeName, dfsplen);
+		memcpy(full_path, tcon->tree_name, dfsplen);
 	full_path[dfsplen] = CIFS_DIR_SEP(cifs_sb);
 	memcpy(full_path + dfsplen + 1, ctx->prepath, pplen);
 	convert_delimiter(full_path, CIFS_DIR_SEP(cifs_sb));
@@ -93,7 +93,7 @@ build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
 		return ERR_PTR(-ENOMEM);
 
 	if (prefix)
-		dfsplen = strnlen(tcon->treeName, MAX_TREE_SIZE + 1);
+		dfsplen = strnlen(tcon->tree_name, MAX_TREE_SIZE + 1);
 	else
 		dfsplen = 0;
 
@@ -123,7 +123,7 @@ build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
 	}
 	if (dfsplen) {
 		s -= dfsplen;
-		memcpy(s, tcon->treeName, dfsplen);
+		memcpy(s, tcon->tree_name, dfsplen);
 		if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIX_PATHS) {
 			int i;
 			for (i = 0; i < dfsplen; i++) {
@@ -193,6 +193,7 @@ cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 		return PTR_ERR(full_path);
 	}
 
+#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 	if (tcon->unix_ext && cap_unix(tcon->ses) && !tcon->broken_posix_open &&
 	    (CIFS_UNIX_POSIX_PATH_OPS_CAP &
 			le64_to_cpu(tcon->fsUnixInfo.Capability))) {
@@ -261,6 +262,7 @@ cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 		 * rare for path not covered on files)
 		 */
 	}
+#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 
 	desired_access = 0;
 	if (OPEN_FMODE(oflags) & FMODE_READ)
@@ -316,6 +318,7 @@ cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned int xid,
 		goto out;
 	}
 
+#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 	/*
 	 * If Open reported that we actually created a file then we now have to
 	 * set the mode if possible.
@@ -357,6 +360,9 @@ cifs_create_get_file_info:
 		rc = cifs_get_inode_info_unix(&newinode, full_path, inode->i_sb,
 					      xid);
 	else {
+#else
+	{
+#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 		/* TODO: Add support for calling POSIX query info here, but passing in fid */
 		rc = cifs_get_inode_info(&newinode, full_path, buf, inode->i_sb,
 					 xid, fid);
@@ -377,7 +383,9 @@ cifs_create_get_file_info:
 		}
 	}
 
+#ifdef CONFIG_CIFS_ALLOW_INSECURE_LEGACY
 cifs_create_set_dentry:
+#endif /* CONFIG_CIFS_ALLOW_INSECURE_LEGACY */
 	if (rc != 0) {
 		cifs_dbg(FYI, "Create worked, get_inode_info failed rc = %d\n",
 			 rc);

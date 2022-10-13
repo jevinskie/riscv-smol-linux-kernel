@@ -79,6 +79,7 @@ static inline void build_leftovers_ft_param(int *priority,
 
 enum mlx5_flow_namespace_type {
 	MLX5_FLOW_NAMESPACE_BYPASS,
+	MLX5_FLOW_NAMESPACE_KERNEL_RX_MACSEC,
 	MLX5_FLOW_NAMESPACE_LAG,
 	MLX5_FLOW_NAMESPACE_OFFLOADS,
 	MLX5_FLOW_NAMESPACE_ETHTOOL,
@@ -92,7 +93,8 @@ enum mlx5_flow_namespace_type {
 	MLX5_FLOW_NAMESPACE_SNIFFER_RX,
 	MLX5_FLOW_NAMESPACE_SNIFFER_TX,
 	MLX5_FLOW_NAMESPACE_EGRESS,
-	MLX5_FLOW_NAMESPACE_EGRESS_KERNEL,
+	MLX5_FLOW_NAMESPACE_EGRESS_IPSEC,
+	MLX5_FLOW_NAMESPACE_EGRESS_MACSEC,
 	MLX5_FLOW_NAMESPACE_RDMA_RX,
 	MLX5_FLOW_NAMESPACE_RDMA_RX_KERNEL,
 	MLX5_FLOW_NAMESPACE_RDMA_TX,
@@ -178,6 +180,7 @@ struct mlx5_flow_table_attr {
 	int max_fte;
 	u32 level;
 	u32 flags;
+	u16 uid;
 	struct mlx5_flow_table *next_ft;
 
 	struct {
@@ -212,6 +215,19 @@ struct mlx5_flow_group *
 mlx5_create_flow_group(struct mlx5_flow_table *ft, u32 *in);
 void mlx5_destroy_flow_group(struct mlx5_flow_group *fg);
 
+struct mlx5_exe_aso {
+	u32 object_id;
+	u8 type;
+	u8 return_reg_id;
+	union {
+		u32 ctrl_data;
+		struct {
+			u8 meter_idx;
+			u8 init_color;
+		} flow_meter;
+	};
+};
+
 struct mlx5_fs_vlan {
         u16 ethtype;
         u16 vid;
@@ -229,14 +245,15 @@ struct mlx5_flow_act {
 	u32 action;
 	struct mlx5_modify_hdr  *modify_hdr;
 	struct mlx5_pkt_reformat *pkt_reformat;
-	union {
-		u32 ipsec_obj_id;
-		uintptr_t esp_id;
-	};
+	struct mlx5_flow_act_crypto_params {
+		u8 type;
+		u32 obj_id;
+	} crypto;
 	u32 flags;
 	struct mlx5_fs_vlan vlan[MLX5_FS_VLAN_DEPTH];
 	struct ib_counters *counters;
 	struct mlx5_flow_group *fg;
+	struct mlx5_exe_aso exe_aso;
 };
 
 #define MLX5_DECLARE_FLOW_ACT(name) \
@@ -301,4 +318,5 @@ struct mlx5_pkt_reformat *mlx5_packet_reformat_alloc(struct mlx5_core_dev *dev,
 void mlx5_packet_reformat_dealloc(struct mlx5_core_dev *dev,
 				  struct mlx5_pkt_reformat *reformat);
 
+u32 mlx5_flow_table_id(struct mlx5_flow_table *ft);
 #endif

@@ -943,6 +943,23 @@ int trigger_module_test_write(int write_sz)
 	return 0;
 }
 
+int write_sysctl(const char *sysctl, const char *value)
+{
+	int fd, err, len;
+
+	fd = open(sysctl, O_WRONLY);
+	if (!ASSERT_NEQ(fd, -1, "open sysctl"))
+		return -1;
+
+	len = strlen(value);
+	err = write(fd, value, len);
+	close(fd);
+	if (!ASSERT_EQ(err, len, "write sysctl"))
+		return -1;
+
+	return 0;
+}
+
 #define MAX_BACKTRACE_SZ 128
 void crash_handler(int signum)
 {
@@ -1604,11 +1621,8 @@ int main(int argc, char **argv)
 		struct prog_test_def *test = &prog_test_defs[i];
 
 		test->test_num = i + 1;
-		if (should_run(&env.test_selector,
-				test->test_num, test->test_name))
-			test->should_run = true;
-		else
-			test->should_run = false;
+		test->should_run = should_run(&env.test_selector,
+					      test->test_num, test->test_name);
 
 		if ((test->run_test == NULL && test->run_serial_test == NULL) ||
 		    (test->run_test != NULL && test->run_serial_test != NULL)) {

@@ -53,6 +53,8 @@ struct phylink_link_state;
 #define DSA_TAG_PROTO_SJA1110_VALUE		23
 #define DSA_TAG_PROTO_RTL8_4_VALUE		24
 #define DSA_TAG_PROTO_RTL8_4T_VALUE		25
+#define DSA_TAG_PROTO_RZN1_A5PSW_VALUE		26
+#define DSA_TAG_PROTO_LAN937X_VALUE		27
 
 enum dsa_tag_protocol {
 	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
@@ -81,6 +83,8 @@ enum dsa_tag_protocol {
 	DSA_TAG_PROTO_SJA1110		= DSA_TAG_PROTO_SJA1110_VALUE,
 	DSA_TAG_PROTO_RTL8_4		= DSA_TAG_PROTO_RTL8_4_VALUE,
 	DSA_TAG_PROTO_RTL8_4T		= DSA_TAG_PROTO_RTL8_4T_VALUE,
+	DSA_TAG_PROTO_RZN1_A5PSW	= DSA_TAG_PROTO_RZN1_A5PSW_VALUE,
+	DSA_TAG_PROTO_LAN937X		= DSA_TAG_PROTO_LAN937X_VALUE,
 };
 
 struct dsa_switch;
@@ -290,11 +294,12 @@ struct dsa_port {
 
 	u8			lag_tx_enabled:1;
 
-	u8			devlink_port_setup:1;
-
 	/* Master state bits, valid only on CPU ports */
 	u8			master_admin_up:1;
 	u8			master_oper_up:1;
+
+	/* Valid only on user ports */
+	u8			cpu_port_in_lag:1;
 
 	u8			setup:1;
 
@@ -555,6 +560,14 @@ static inline bool dsa_is_user_port(struct dsa_switch *ds, int p)
 	list_for_each_entry((_dp), &(_dst)->ports, list) \
 		if (dsa_port_is_user((_dp)))
 
+#define dsa_tree_for_each_user_port_continue_reverse(_dp, _dst) \
+	list_for_each_entry_continue_reverse((_dp), &(_dst)->ports, list) \
+		if (dsa_port_is_user((_dp)))
+
+#define dsa_tree_for_each_cpu_port(_dp, _dst) \
+	list_for_each_entry((_dp), &(_dst)->ports, list) \
+		if (dsa_port_is_cpu((_dp)))
+
 #define dsa_switch_for_each_port(_dp, _ds) \
 	list_for_each_entry((_dp), &(_ds)->dst->ports, list) \
 		if ((_dp)->ds == (_ds))
@@ -710,6 +723,14 @@ static inline bool dsa_port_offloads_lag(struct dsa_port *dp,
 	return dsa_port_lag_dev_get(dp) == lag->dev;
 }
 
+static inline struct net_device *dsa_port_to_master(const struct dsa_port *dp)
+{
+	if (dp->cpu_port_in_lag)
+		return dsa_port_lag_dev_get(dp->cpu_dp);
+
+	return dp->cpu_dp->master;
+}
+
 static inline
 struct net_device *dsa_port_to_bridge_port(const struct dsa_port *dp)
 {
@@ -794,6 +815,12 @@ dsa_tree_offloads_bridge_dev(struct dsa_switch_tree *dst,
 	return false;
 }
 
+static inline bool dsa_port_tree_same(const struct dsa_port *a,
+				      const struct dsa_port *b)
+{
+	return a->ds->dst == b->ds->dst;
+}
+
 typedef int dsa_fdb_dump_cb_t(const unsigned char *addr, u16 vid,
 			      bool is_static, void *data);
 struct dsa_switch_ops {
@@ -816,6 +843,10 @@ struct dsa_switch_ops {
 	 */
 	int	(*connect_tag_protocol)(struct dsa_switch *ds,
 					enum dsa_tag_protocol proto);
+
+	int	(*port_change_master)(struct dsa_switch *ds, int port,
+				      struct net_device *master,
+				      struct netlink_ext_ack *extack);
 
 	/* Optional switch-wide initialization and destruction methods */
 	int	(*setup)(struct dsa_switch *ds);
@@ -888,8 +919,13 @@ struct dsa_switch_ops {
 				     struct ethtool_eth_mac_stats *mac_stats);
 	void	(*get_eth_ctrl_stats)(struct dsa_switch *ds, int port,
 				      struct ethtool_eth_ctrl_stats *ctrl_stats);
+	void	(*get_rmon_stats)(struct dsa_switch *ds, int port,
+				  struct ethtool_rmon_stats *rmon_stats,
+				  const struct ethtool_rmon_hist_range **ranges);
 	void	(*get_stats64)(struct dsa_switch *ds, int port,
 				   struct rtnl_link_stats64 *s);
+	void	(*get_pause_stats)(struct dsa_switch *ds, int port,
+				   struct ethtool_pause_stats *pause_stats);
 	void	(*self_test)(struct dsa_switch *ds, int port,
 			     struct ethtool_test *etest, u64 *data);
 
@@ -1068,7 +1104,8 @@ struct dsa_switch_ops {
 					int port);
 	int	(*crosschip_lag_join)(struct dsa_switch *ds, int sw_index,
 				      int port, struct dsa_lag lag,
-				      struct netdev_lag_upper_info *info);
+				      struct netdev_lag_upper_info *info,
+				      struct netlink_ext_ack *extack);
 	int	(*crosschip_lag_leave)(struct dsa_switch *ds, int sw_index,
 				       int port, struct dsa_lag lag);
 
@@ -1143,7 +1180,8 @@ struct dsa_switch_ops {
 	int	(*port_lag_change)(struct dsa_switch *ds, int port);
 	int	(*port_lag_join)(struct dsa_switch *ds, int port,
 				 struct dsa_lag lag,
-				 struct netdev_lag_upper_info *info);
+				 struct netdev_lag_upper_info *info,
+				 struct netlink_ext_ack *extack);
 	int	(*port_lag_leave)(struct dsa_switch *ds, int port,
 				  struct dsa_lag lag);
 

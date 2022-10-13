@@ -1989,11 +1989,9 @@ static int gswip_gphy_fw_probe(struct gswip_priv *priv,
 	}
 
 	gphy_fw->reset = of_reset_control_array_get_exclusive(gphy_fw_np);
-	if (IS_ERR(gphy_fw->reset)) {
-		if (PTR_ERR(gphy_fw->reset) != -EPROBE_DEFER)
-			dev_err(dev, "Failed to lookup gphy reset\n");
-		return PTR_ERR(gphy_fw->reset);
-	}
+	if (IS_ERR(gphy_fw->reset))
+		return dev_err_probe(dev, PTR_ERR(gphy_fw->reset),
+				     "Failed to lookup gphy reset\n");
 
 	return gswip_gphy_fw_load(priv, gphy_fw);
 }
@@ -2070,8 +2068,10 @@ static int gswip_gphy_fw_list(struct gswip_priv *priv,
 	for_each_available_child_of_node(gphy_fw_list_np, gphy_fw_np) {
 		err = gswip_gphy_fw_probe(priv, &priv->gphy_fw[i],
 					  gphy_fw_np, i);
-		if (err)
+		if (err) {
+			of_node_put(gphy_fw_np);
 			goto remove_gphy;
+		}
 		i++;
 	}
 
@@ -2228,8 +2228,6 @@ static int gswip_remove(struct platform_device *pdev)
 
 	for (i = 0; i < priv->num_gphy_fw; i++)
 		gswip_gphy_fw_remove(priv, &priv->gphy_fw[i]);
-
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }

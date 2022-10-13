@@ -18,6 +18,8 @@
 #include <linux/rhashtable.h>
 #include <linux/dim.h>
 #include <linux/bitfield.h>
+#include <net/page_pool.h>
+#include <linux/bpf_trace.h>
 #include "mtk_ppe.h"
 
 #define MTK_QDMA_PAGE_SIZE	2048
@@ -48,6 +50,11 @@
 				 NETIF_F_HW_TC)
 #define MTK_HW_FEATURES_MT7628	(NETIF_F_SG | NETIF_F_RXCSUM)
 #define NEXT_DESP_IDX(X, Y)	(((X) + 1) & ((Y) - 1))
+
+#define MTK_PP_HEADROOM		XDP_PACKET_HEADROOM
+#define MTK_PP_PAD		(MTK_PP_HEADROOM + \
+				 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
+#define MTK_PP_MAX_BUF_SIZE	(PAGE_SIZE - MTK_PP_PAD)
 
 #define MTK_QRX_OFFSET		0x10
 
@@ -98,7 +105,6 @@
 #define MTK_GDMA_TCS_EN		BIT(21)
 #define MTK_GDMA_UCS_EN		BIT(20)
 #define MTK_GDMA_TO_PDMA	0x0
-#define MTK_GDMA_TO_PPE		0x4444
 #define MTK_GDMA_DROP_ALL       0x7777
 
 /* Unicast Filter MAC Address Register - Low */
@@ -262,9 +268,6 @@
 #define TX_DMA_FPORT_MASK_V2	0xf
 #define TX_DMA_SWC_V2		BIT(30)
 
-#define MTK_WDMA0_BASE		0x2800
-#define MTK_WDMA1_BASE		0x2c00
-
 /* QDMA descriptor txd4 */
 #define TX_DMA_CHKSUM		(0x7 << 29)
 #define TX_DMA_TSO		BIT(28)
@@ -307,8 +310,13 @@
 #define RX_DMA_L4_VALID_PDMA	BIT(30)		/* when PDMA is used */
 #define RX_DMA_SPECIAL_TAG	BIT(22)
 
-#define RX_DMA_GET_SPORT(x)	(((x) >> 19) & 0xf)
-#define RX_DMA_GET_SPORT_V2(x)	(((x) >> 26) & 0x7)
+/* PDMA descriptor rxd5 */
+#define MTK_RXD5_FOE_ENTRY	GENMASK(14, 0)
+#define MTK_RXD5_PPE_CPU_REASON	GENMASK(22, 18)
+#define MTK_RXD5_SRC_PORT	GENMASK(29, 26)
+
+#define RX_DMA_GET_SPORT(x)	(((x) >> 19) & 0x7)
+#define RX_DMA_GET_SPORT_V2(x)	(((x) >> 26) & 0xf)
 
 /* PDMA V2 descriptor rxd3 */
 #define RX_DMA_VTAG_V2		BIT(0)
@@ -563,6 +571,16 @@ struct mtk_tx_dma_v2 {
 struct mtk_eth;
 struct mtk_mac;
 
+struct mtk_xdp_stats {
+	u64 rx_xdp_redirect;
+	u64 rx_xdp_pass;
+	u64 rx_xdp_drop;
+	u64 rx_xdp_tx;
+	u64 rx_xdp_tx_errors;
+	u64 tx_xdp_xmit;
+	u64 tx_xdp_xmit_errors;
+};
+
 /* struct mtk_hw_stats - the structure that holds the traffic statistics.
  * @stats_lock:		make sure that stats operations are atomic
  * @reg_offset:		the status register offset of the SoC
@@ -585,6 +603,8 @@ struct mtk_hw_stats {
 	u64 rx_long_errors;
 	u64 rx_checksum_errors;
 	u64 rx_flow_control_packets;
+
+	struct mtk_xdp_stats	xdp_stats;
 
 	spinlock_t		stats_lock;
 	u32			reg_offset;
@@ -677,6 +697,12 @@ enum mtk_dev_state {
 	MTK_RESETTING
 };
 
+enum mtk_tx_buf_type {
+	MTK_TYPE_SKB,
+	MTK_TYPE_XDP_TX,
+	MTK_TYPE_XDP_NDO,
+};
+
 /* struct mtk_tx_buf -	This struct holds the pointers to the memory pointed at
  *			by the TX descriptor	s
  * @skb:		The SKB pointer of the packet being sent
@@ -686,7 +712,9 @@ enum mtk_dev_state {
  * @dma_len1:		The length of the second segment
  */
 struct mtk_tx_buf {
-	struct sk_buff *skb;
+	enum mtk_tx_buf_type type;
+	void *data;
+
 	u32 flags;
 	DEFINE_DMA_UNMAP_ADDR(dma_addr0);
 	DEFINE_DMA_UNMAP_LEN(dma_len0);
@@ -745,6 +773,9 @@ struct mtk_rx_ring {
 	bool calc_idx_update;
 	u16 calc_idx;
 	u32 crx_idx_reg;
+	/* page_pool */
+	struct page_pool *page_pool;
+	struct xdp_rxq_info xdp_q;
 };
 
 enum mkt_eth_capabilities {
@@ -920,6 +951,9 @@ struct mtk_reg_map {
 		u32	fq_blen;	/* fq free page buffer length */
 	} qdma;
 	u32	gdm1_cnt;
+	u32	gdma_to_ppe;
+	u32	ppe_base;
+	u32	wdma_base[2];
 };
 
 /* struct mtk_eth_data -	This is the structure holding all differences
@@ -933,6 +967,8 @@ struct mtk_reg_map {
  *				the target SoC
  * @required_pctl		A bool value to show whether the SoC requires
  *				the extra setup for those pins used by GMAC.
+ * @hash_offset			Flow table hash offset.
+ * @foe_entry_size		Foe table entry size.
  * @txd_size			Tx DMA descriptor size.
  * @rxd_size			Rx DMA descriptor size.
  * @rx_irq_done_mask		Rx irq done register mask.
@@ -947,6 +983,8 @@ struct mtk_soc_data {
 	u32		required_clks;
 	bool		required_pctl;
 	u8		offload_version;
+	u8		hash_offset;
+	u16		foe_entry_size;
 	netdev_features_t hw_features;
 	struct {
 		u32	txd_size;
@@ -1076,8 +1114,10 @@ struct mtk_eth {
 
 	int				ip_align;
 
-	struct mtk_ppe			*ppe;
+	struct mtk_ppe			*ppe[2];
 	struct rhashtable		flow_table;
+
+	struct bpf_prog			__rcu *prog;
 };
 
 /* struct mtk_mac -	the structure that holds the info about the MACs of the
@@ -1104,6 +1144,86 @@ struct mtk_mac {
 
 /* the struct describing the SoC. these are declared in the soc_xyz.c files */
 extern const struct of_device_id of_mtk_match[];
+
+static inline struct mtk_foe_entry *
+mtk_foe_get_entry(struct mtk_ppe *ppe, u16 hash)
+{
+	const struct mtk_soc_data *soc = ppe->eth->soc;
+
+	return ppe->foe_table + hash * soc->foe_entry_size;
+}
+
+static inline u32 mtk_get_ib1_ts_mask(struct mtk_eth *eth)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return MTK_FOE_IB1_BIND_TIMESTAMP_V2;
+
+	return MTK_FOE_IB1_BIND_TIMESTAMP;
+}
+
+static inline u32 mtk_get_ib1_ppoe_mask(struct mtk_eth *eth)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return MTK_FOE_IB1_BIND_PPPOE_V2;
+
+	return MTK_FOE_IB1_BIND_PPPOE;
+}
+
+static inline u32 mtk_get_ib1_vlan_tag_mask(struct mtk_eth *eth)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return MTK_FOE_IB1_BIND_VLAN_TAG_V2;
+
+	return MTK_FOE_IB1_BIND_VLAN_TAG;
+}
+
+static inline u32 mtk_get_ib1_vlan_layer_mask(struct mtk_eth *eth)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return MTK_FOE_IB1_BIND_VLAN_LAYER_V2;
+
+	return MTK_FOE_IB1_BIND_VLAN_LAYER;
+}
+
+static inline u32 mtk_prep_ib1_vlan_layer(struct mtk_eth *eth, u32 val)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return FIELD_PREP(MTK_FOE_IB1_BIND_VLAN_LAYER_V2, val);
+
+	return FIELD_PREP(MTK_FOE_IB1_BIND_VLAN_LAYER, val);
+}
+
+static inline u32 mtk_get_ib1_vlan_layer(struct mtk_eth *eth, u32 val)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return FIELD_GET(MTK_FOE_IB1_BIND_VLAN_LAYER_V2, val);
+
+	return FIELD_GET(MTK_FOE_IB1_BIND_VLAN_LAYER, val);
+}
+
+static inline u32 mtk_get_ib1_pkt_type_mask(struct mtk_eth *eth)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return MTK_FOE_IB1_PACKET_TYPE_V2;
+
+	return MTK_FOE_IB1_PACKET_TYPE;
+}
+
+static inline u32 mtk_get_ib1_pkt_type(struct mtk_eth *eth, u32 val)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return FIELD_GET(MTK_FOE_IB1_PACKET_TYPE_V2, val);
+
+	return FIELD_GET(MTK_FOE_IB1_PACKET_TYPE, val);
+}
+
+static inline u32 mtk_get_ib2_multicast_mask(struct mtk_eth *eth)
+{
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V2))
+		return MTK_FOE_IB2_MULTICAST_V2;
+
+	return MTK_FOE_IB2_MULTICAST;
+}
 
 /* read the hardware status register */
 void mtk_stats_update_mac(struct mtk_mac *mac);

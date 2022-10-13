@@ -350,11 +350,10 @@ static struct dma_debug_entry *bucket_find_contain(struct hash_bucket **bucket,
 						   unsigned long *flags)
 {
 
-	unsigned int max_range = dma_get_max_seg_size(ref->dev);
 	struct dma_debug_entry *entry, index = *ref;
-	unsigned int range = 0;
+	int limit = min(HASH_SIZE, (index.dev_addr >> HASH_FN_SHIFT) + 1);
 
-	while (range <= max_range) {
+	for (int i = 0; i < limit; i++) {
 		entry = __hash_bucket_find(*bucket, ref, containing_match);
 
 		if (entry)
@@ -364,7 +363,6 @@ static struct dma_debug_entry *bucket_find_contain(struct hash_bucket **bucket,
 		 * Nothing found, go back a hash bucket
 		 */
 		put_hash_bucket(*bucket, *flags);
-		range          += (1 << HASH_FN_SHIFT);
 		index.dev_addr -= (1 << HASH_FN_SHIFT);
 		*bucket = get_hash_bucket(&index, flags);
 	}
@@ -564,7 +562,7 @@ static void add_dma_entry(struct dma_debug_entry *entry, unsigned long attrs)
 
 	rc = active_cacheline_insert(entry);
 	if (rc == -ENOMEM) {
-		pr_err("cacheline tracking ENOMEM, dma-debug disabled\n");
+		pr_err_once("cacheline tracking ENOMEM, dma-debug disabled\n");
 		global_disable = true;
 	} else if (rc == -EEXIST && !(attrs & DMA_ATTR_SKIP_CPU_SYNC)) {
 		err_printk(entry->dev, entry,

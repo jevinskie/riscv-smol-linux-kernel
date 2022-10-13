@@ -3322,7 +3322,7 @@ out:
 }
 
 static int test_acomp(struct crypto_acomp *tfm,
-			      const struct comp_testvec *ctemplate,
+		      const struct comp_testvec *ctemplate,
 		      const struct comp_testvec *dtemplate,
 		      int ctcount, int dtcount)
 {
@@ -3417,6 +3417,21 @@ static int test_acomp(struct crypto_acomp *tfm,
 			goto out;
 		}
 
+#ifdef CONFIG_CRYPTO_MANAGER_EXTRA_TESTS
+		crypto_init_wait(&wait);
+		sg_init_one(&src, input_vec, ilen);
+		acomp_request_set_params(req, &src, NULL, ilen, 0);
+
+		ret = crypto_wait_req(crypto_acomp_compress(req), &wait);
+		if (ret) {
+			pr_err("alg: acomp: compression failed on NULL dst buffer test %d for %s: ret=%d\n",
+			       i + 1, algo, -ret);
+			kfree(input_vec);
+			acomp_request_free(req);
+			goto out;
+		}
+#endif
+
 		kfree(input_vec);
 		acomp_request_free(req);
 	}
@@ -3477,6 +3492,20 @@ static int test_acomp(struct crypto_acomp *tfm,
 			acomp_request_free(req);
 			goto out;
 		}
+
+#ifdef CONFIG_CRYPTO_MANAGER_EXTRA_TESTS
+		crypto_init_wait(&wait);
+		acomp_request_set_params(req, &src, NULL, ilen, 0);
+
+		ret = crypto_wait_req(crypto_acomp_decompress(req), &wait);
+		if (ret) {
+			pr_err("alg: acomp: decompression failed on NULL dst buffer test %d for %s: ret=%d\n",
+			       i + 1, algo, -ret);
+			kfree(input_vec);
+			acomp_request_free(req);
+			goto out;
+		}
+#endif
 
 		kfree(input_vec);
 		acomp_request_free(req);
@@ -4376,30 +4405,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.hash = __VECS(blake2b_512_tv_template)
 		}
 	}, {
-		.alg = "blake2s-128",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_128_tv_template)
-		}
-	}, {
-		.alg = "blake2s-160",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_160_tv_template)
-		}
-	}, {
-		.alg = "blake2s-224",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_224_tv_template)
-		}
-	}, {
-		.alg = "blake2s-256",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(blakes2s_256_tv_template)
-		}
-	}, {
 		.alg = "cbc(aes)",
 		.test = alg_test_skcipher,
 		.fips_allowed = 1,
@@ -4411,6 +4416,12 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.test = alg_test_skcipher,
 		.suite = {
 			.cipher = __VECS(anubis_cbc_tv_template)
+		},
+	}, {
+		.alg = "cbc(aria)",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = __VECS(aria_cbc_tv_template)
 		},
 	}, {
 		.alg = "cbc(blowfish)",
@@ -4530,6 +4541,12 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.cipher = __VECS(aes_cfb_tv_template)
 		},
 	}, {
+		.alg = "cfb(aria)",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = __VECS(aria_cfb_tv_template)
+		},
+	}, {
 		.alg = "cfb(sm4)",
 		.test = alg_test_skcipher,
 		.suite = {
@@ -4597,6 +4614,12 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.fips_allowed = 1,
 		.suite = {
 			.cipher = __VECS(aes_ctr_tv_template)
+		}
+	}, {
+		.alg = "ctr(aria)",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = __VECS(aria_ctr_tv_template)
 		}
 	}, {
 		.alg = "ctr(blowfish)",
@@ -4859,6 +4882,12 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.cipher = __VECS(arc4_tv_template)
 		}
 	}, {
+		.alg = "ecb(aria)",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = __VECS(aria_tv_template)
+		}
+	}, {
 		.alg = "ecb(blowfish)",
 		.test = alg_test_skcipher,
 		.suite = {
@@ -5075,6 +5104,13 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.aead = __VECS(aes_gcm_tv_template)
 		}
 	}, {
+		.alg = "gcm(aria)",
+		.generic_driver = "gcm_base(ctr(aria-generic),ghash-generic)",
+		.test = alg_test_aead,
+		.suite = {
+			.aead = __VECS(aria_gcm_tv_template)
+		}
+	}, {
 		.alg = "gcm(sm4)",
 		.generic_driver = "gcm_base(ctr(sm4-generic),ghash-generic)",
 		.test = alg_test_aead,
@@ -5087,6 +5123,14 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(ghash_tv_template)
+		}
+	}, {
+		.alg = "hctr2(aes)",
+		.generic_driver =
+		    "hctr2_base(xctr(aes-generic),polyval-generic)",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = __VECS(aes_hctr2_tv_template)
 		}
 	}, {
 		.alg = "hmac(md5)",
@@ -5343,6 +5387,12 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.hash = __VECS(poly1305_tv_template)
 		}
 	}, {
+		.alg = "polyval",
+		.test = alg_test_hash,
+		.suite = {
+			.hash = __VECS(polyval_tv_template)
+		}
+	}, {
 		.alg = "rfc3686(ctr(aes))",
 		.test = alg_test_skcipher,
 		.fips_allowed = 1,
@@ -5548,6 +5598,12 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.suite = {
 			.cipher = __VECS(xchacha20_tv_template)
 		},
+	}, {
+		.alg = "xctr(aes)",
+		.test = alg_test_skcipher,
+		.suite = {
+			.cipher = __VECS(aes_xctr_tv_template)
+		}
 	}, {
 		.alg = "xts(aes)",
 		.generic_driver = "xts(ecb(aes-generic))",
@@ -5774,8 +5830,11 @@ test_done:
 			      driver, alg,
 			      fips_enabled ? "fips" : "panic_on_fail");
 		}
-		WARN(1, "alg: self-tests for %s (%s) failed (rc=%d)",
-		     driver, alg, rc);
+		pr_warn("alg: self-tests for %s using %s failed (rc=%d)",
+			alg, driver, rc);
+		WARN(rc != -ENOENT,
+		     "alg: self-tests for %s using %s failed (rc=%d)",
+		     alg, driver, rc);
 	} else {
 		if (fips_enabled)
 			pr_info("alg: self-tests for %s (%s) passed\n",

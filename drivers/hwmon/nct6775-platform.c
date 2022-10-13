@@ -355,11 +355,11 @@ static void nct6791_enable_io_mapping(struct nct6775_sio_data *sio_data)
 	}
 }
 
-static int __maybe_unused nct6775_suspend(struct device *dev)
+static int nct6775_suspend(struct device *dev)
 {
 	int err;
 	u16 tmp;
-	struct nct6775_data *data = dev_get_drvdata(dev);
+	struct nct6775_data *data = nct6775_update_device(dev);
 
 	if (IS_ERR(data))
 		return PTR_ERR(data);
@@ -386,7 +386,7 @@ out:
 	return err;
 }
 
-static int __maybe_unused nct6775_resume(struct device *dev)
+static int nct6775_resume(struct device *dev)
 {
 	struct nct6775_data *data = dev_get_drvdata(dev);
 	struct nct6775_sio_data *sio_data = dev_get_platdata(dev);
@@ -467,7 +467,7 @@ abort:
 	return err;
 }
 
-static SIMPLE_DEV_PM_OPS(nct6775_dev_pm_ops, nct6775_suspend, nct6775_resume);
+static DEFINE_SIMPLE_DEV_PM_OPS(nct6775_dev_pm_ops, nct6775_suspend, nct6775_resume);
 
 static void
 nct6775_check_fan_inputs(struct nct6775_data *data, struct nct6775_sio_data *sio_data)
@@ -934,7 +934,7 @@ static int nct6775_platform_probe(struct platform_device *pdev)
 static struct platform_driver nct6775_driver = {
 	.driver = {
 		.name	= DRVNAME,
-		.pm	= &nct6775_dev_pm_ops,
+		.pm	= pm_sleep_ptr(&nct6775_dev_pm_ops),
 	},
 	.probe		= nct6775_platform_probe,
 };
@@ -1083,6 +1083,7 @@ static const char * const asus_wmi_boards[] = {
 	"TUF GAMING B550M-PLUS",
 	"TUF GAMING B550M-PLUS (WI-FI)",
 	"TUF GAMING B550-PLUS",
+	"TUF GAMING B550-PLUS WIFI II",
 	"TUF GAMING B550-PRO",
 	"TUF GAMING X570-PLUS",
 	"TUF GAMING X570-PLUS (WI-FI)",
@@ -1200,10 +1201,8 @@ static int __init sensors_nct6775_platform_init(void)
 exit_device_put:
 	platform_device_put(pdev[i]);
 exit_device_unregister:
-	while (--i >= 0) {
-		if (pdev[i])
-			platform_device_unregister(pdev[i]);
-	}
+	while (i--)
+		platform_device_unregister(pdev[i]);
 exit_unregister:
 	platform_driver_unregister(&nct6775_driver);
 	return err;
@@ -1213,10 +1212,8 @@ static void __exit sensors_nct6775_platform_exit(void)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(pdev); i++) {
-		if (pdev[i])
-			platform_device_unregister(pdev[i]);
-	}
+	for (i = 0; i < ARRAY_SIZE(pdev); i++)
+		platform_device_unregister(pdev[i]);
 	platform_driver_unregister(&nct6775_driver);
 }
 

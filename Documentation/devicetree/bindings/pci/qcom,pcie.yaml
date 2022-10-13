@@ -11,7 +11,7 @@ maintainers:
   - Stanimir Varbanov <svarbanov@mm-sol.com>
 
 description: |
-  Qualcomm PCIe root complex controller is bansed on the Synopsys DesignWare
+  Qualcomm PCIe root complex controller is based on the Synopsys DesignWare
   PCIe IP.
 
 properties:
@@ -25,8 +25,10 @@ properties:
       - qcom,pcie-ipq4019
       - qcom,pcie-ipq8074
       - qcom,pcie-qcs404
+      - qcom,pcie-sa8540p
       - qcom,pcie-sc7280
       - qcom,pcie-sc8180x
+      - qcom,pcie-sc8280xp
       - qcom,pcie-sdm845
       - qcom,pcie-sm8150
       - qcom,pcie-sm8250
@@ -43,21 +45,22 @@ properties:
     maxItems: 5
 
   interrupts:
-    maxItems: 1
+    minItems: 1
+    maxItems: 8
 
   interrupt-names:
-    items:
-      - const: msi
+    minItems: 1
+    maxItems: 8
 
   # Common definitions for clocks, clock-names and reset.
   # Platform constraints are described later.
   clocks:
     minItems: 3
-    maxItems: 12
+    maxItems: 13
 
   clock-names:
     minItems: 3
-    maxItems: 12
+    maxItems: 13
 
   resets:
     minItems: 1
@@ -180,6 +183,7 @@ allOf:
             enum:
               - qcom,pcie-sc7280
               - qcom,pcie-sc8180x
+              - qcom,pcie-sc8280xp
               - qcom,pcie-sm8250
               - qcom,pcie-sm8450-pcie0
               - qcom,pcie-sm8450-pcie1
@@ -423,8 +427,8 @@ allOf:
     then:
       properties:
         clocks:
-          minItems: 11
-          maxItems: 11
+          minItems: 13
+          maxItems: 13
         clock-names:
           items:
             - const: pipe # PIPE clock
@@ -438,6 +442,8 @@ allOf:
             - const: slave_q2a # Slave Q2A clock
             - const: tbu # PCIe TBU clock
             - const: ddrss_sf_tbu # PCIe SF TBU clock
+            - const: aggre0 # Aggre NoC PCIe CENTER SF AXI clock
+            - const: aggre1 # Aggre NoC PCIe1 AXI clock
         resets:
           maxItems: 1
         reset-names:
@@ -596,6 +602,36 @@ allOf:
             - const: pci # PCIe core reset
 
   - if:
+      properties:
+        compatible:
+          contains:
+            enum:
+              - qcom,pcie-sa8540p
+              - qcom,pcie-sc8280xp
+    then:
+      properties:
+        clocks:
+          minItems: 8
+          maxItems: 9
+        clock-names:
+          minItems: 8
+          items:
+            - const: aux # Auxiliary clock
+            - const: cfg # Configuration clock
+            - const: bus_master # Master AXI clock
+            - const: bus_slave # Slave AXI clock
+            - const: slave_q2a # Slave Q2A clock
+            - const: ddrss_sf_tbu # PCIe SF TBU clock
+            - const: noc_aggr_4 # NoC aggregate 4 clock
+            - const: noc_aggr_south_sf # NoC aggregate South SF clock
+            - const: cnoc_qx # Configuration NoC QX clock
+        resets:
+          maxItems: 1
+        reset-names:
+          items:
+            - const: pci # PCIe core reset
+
+  - if:
       not:
         properties:
           compatible:
@@ -614,7 +650,7 @@ allOf:
   - if:
       not:
         properties:
-          compatibles:
+          compatible:
             contains:
               enum:
                 - qcom,pcie-msm8996
@@ -622,6 +658,81 @@ allOf:
       required:
         - resets
         - reset-names
+
+  - if:
+      properties:
+        compatible:
+          contains:
+            enum:
+              - qcom,pcie-msm8996
+              - qcom,pcie-sc7280
+              - qcom,pcie-sc8180x
+              - qcom,pcie-sdm845
+              - qcom,pcie-sm8150
+              - qcom,pcie-sm8250
+              - qcom,pcie-sm8450-pcie0
+              - qcom,pcie-sm8450-pcie1
+    then:
+      oneOf:
+        - properties:
+            interrupts:
+              maxItems: 1
+            interrupt-names:
+              items:
+                - const: msi
+        - properties:
+            interrupts:
+              minItems: 8
+            interrupt-names:
+              items:
+                - const: msi0
+                - const: msi1
+                - const: msi2
+                - const: msi3
+                - const: msi4
+                - const: msi5
+                - const: msi6
+                - const: msi7
+
+  - if:
+      properties:
+        compatible:
+          contains:
+            enum:
+              - qcom,pcie-sc8280xp
+    then:
+      properties:
+        interrupts:
+          minItems: 4
+          maxItems: 4
+        interrupt-names:
+          items:
+            - const: msi0
+            - const: msi1
+            - const: msi2
+            - const: msi3
+
+  - if:
+      properties:
+        compatible:
+          contains:
+            enum:
+              - qcom,pcie-apq8064
+              - qcom,pcie-apq8084
+              - qcom,pcie-ipq4019
+              - qcom,pcie-ipq6018
+              - qcom,pcie-ipq8064
+              - qcom,pcie-ipq8064-v2
+              - qcom,pcie-ipq8074
+              - qcom,pcie-qcs404
+              - qcom,pcie-sa8540p
+    then:
+      properties:
+        interrupts:
+          maxItems: 1
+        interrupt-names:
+          items:
+            - const: msi
 
 unevaluatedProperties: false
 

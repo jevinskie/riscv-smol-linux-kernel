@@ -649,7 +649,7 @@ static int at_xdmac_compute_chan_conf(struct dma_chan *chan,
 }
 
 /*
- * Only check that maxburst and addr width values are supported by the
+ * Only check that maxburst and addr width values are supported by
  * the controller but not that the configuration is good to perform the
  * transfer since we don't know the direction at this stage.
  */
@@ -1470,10 +1470,7 @@ at_xdmac_tx_status(struct dma_chan *chan, dma_cookie_t cookie,
 	bool			initd;
 
 	ret = dma_cookie_status(chan, cookie, txstate);
-	if (ret == DMA_COMPLETE)
-		return ret;
-
-	if (!txstate)
+	if (ret == DMA_COMPLETE || !txstate)
 		return ret;
 
 	spin_lock_irqsave(&atchan->lock, flags);
@@ -1900,6 +1897,11 @@ static int at_xdmac_alloc_chan_resources(struct dma_chan *chan)
 	for (i = 0; i < init_nr_desc_per_channel; i++) {
 		desc = at_xdmac_alloc_desc(chan, GFP_KERNEL);
 		if (!desc) {
+			if (i == 0) {
+				dev_warn(chan2dev(chan),
+					 "can't allocate any descriptors\n");
+				return -EIO;
+			}
 			dev_warn(chan2dev(chan),
 				"only %d descriptors have been allocated\n", i);
 			break;

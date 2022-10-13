@@ -736,11 +736,6 @@ int dccp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 
 	lock_sock(sk);
 
-	if (dccp_qpolicy_full(sk)) {
-		rc = -EAGAIN;
-		goto out_release;
-	}
-
 	timeo = sock_sndtimeo(sk, noblock);
 
 	/*
@@ -758,6 +753,11 @@ int dccp_sendmsg(struct sock *sk, struct msghdr *msg, size_t len)
 	lock_sock(sk);
 	if (skb == NULL)
 		goto out_release;
+
+	if (dccp_qpolicy_full(sk)) {
+		rc = -EAGAIN;
+		goto out_discard;
+	}
 
 	if (sk->sk_state == DCCP_CLOSED) {
 		rc = -ENOTCONN;
@@ -1182,7 +1182,7 @@ static int __init dccp_init(void)
 		goto out_free_dccp_locks;
 	}
 
-	dccp_hashinfo.bhash2 = (struct inet_bind2_hashbucket *)
+	dccp_hashinfo.bhash2 = (struct inet_bind_hashbucket *)
 		__get_free_pages(GFP_ATOMIC | __GFP_NOWARN, bhash_order);
 
 	if (!dccp_hashinfo.bhash2) {
@@ -1193,8 +1193,11 @@ static int __init dccp_init(void)
 	for (i = 0; i < dccp_hashinfo.bhash_size; i++) {
 		spin_lock_init(&dccp_hashinfo.bhash[i].lock);
 		INIT_HLIST_HEAD(&dccp_hashinfo.bhash[i].chain);
+		spin_lock_init(&dccp_hashinfo.bhash2[i].lock);
 		INIT_HLIST_HEAD(&dccp_hashinfo.bhash2[i].chain);
 	}
+
+	dccp_hashinfo.pernet = false;
 
 	rc = dccp_mib_init();
 	if (rc)

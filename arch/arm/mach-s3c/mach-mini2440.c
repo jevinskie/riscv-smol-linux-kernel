@@ -93,9 +93,15 @@ static struct s3c2410_uartcfg mini2440_uartcfgs[] __initdata = {
 /* USB device UDC support */
 
 static struct s3c2410_udc_mach_info mini2440_udc_cfg __initdata = {
-	.pullup_pin = S3C2410_GPC(5),
 };
 
+static struct gpiod_lookup_table mini2440_udc_gpio_table = {
+	.dev_id = "s3c2410-usbgadget",
+	.table = {
+		GPIO_LOOKUP("GPIOC", 5, "pullup", GPIO_ACTIVE_HIGH),
+		{ },
+	},
+};
 
 /* LCD timing and setup */
 
@@ -624,7 +630,7 @@ static char mini2440_features_str[12] __initdata = "0tb";
 static int __init mini2440_features_setup(char *str)
 {
 	if (str)
-		strlcpy(mini2440_features_str, str,
+		strscpy(mini2440_features_str, str,
 			sizeof(mini2440_features_str));
 	return 1;
 }
@@ -755,6 +761,7 @@ static void __init mini2440_init(void)
 		s3c24xx_fb_set_platdata(&mini2440_fb_info);
 	}
 
+	gpiod_add_lookup_table(&mini2440_udc_gpio_table);
 	s3c24xx_udc_set_platdata(&mini2440_udc_cfg);
 	gpiod_add_lookup_table(&mini2440_mmc_gpio_table);
 	s3c24xx_mci_set_platdata(&mini2440_mmc_cfg);

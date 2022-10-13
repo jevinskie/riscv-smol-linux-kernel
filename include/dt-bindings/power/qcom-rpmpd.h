@@ -36,6 +36,18 @@
 #define SM6350_MSS	4
 #define SM6350_MX	5
 
+/* SM6350 Power Domain Indexes */
+#define SM6375_VDDCX		0
+#define SM6375_VDDCX_AO	1
+#define SM6375_VDDCX_VFL	2
+#define SM6375_VDDMX		3
+#define SM6375_VDDMX_AO	4
+#define SM6375_VDDMX_VFL	5
+#define SM6375_VDDGX		6
+#define SM6375_VDDGX_AO	7
+#define SM6375_VDD_LPI_CX	8
+#define SM6375_VDD_LPI_MX	9
+
 /* SM8150 Power Domain Indexes */
 #define SM8150_MSS	0
 #define SM8150_EBI	1
@@ -186,6 +198,13 @@
 #define MSM8916_VDDCX_VFC	2
 #define MSM8916_VDDMX		3
 #define MSM8916_VDDMX_AO	4
+
+/* MSM8909 Power Domain Indexes */
+#define MSM8909_VDDCX		MSM8916_VDDCX
+#define MSM8909_VDDCX_AO	MSM8916_VDDCX_AO
+#define MSM8909_VDDCX_VFC	MSM8916_VDDCX_VFC
+#define MSM8909_VDDMX		MSM8916_VDDMX
+#define MSM8909_VDDMX_AO	MSM8916_VDDMX_AO
 
 /* MSM8953 Power Domain Indexes */
 #define MSM8953_VDDMD		0

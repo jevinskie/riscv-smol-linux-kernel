@@ -85,6 +85,14 @@ config AMCC_PPC440SPE_ADMA
 	help
 	  Enable support for the AMCC PPC440SPe RAID engines.
 
+config APPLE_ADMAC
+	tristate "Apple ADMAC support"
+	depends on ARCH_APPLE || COMPILE_TEST
+	select DMA_ENGINE
+	default ARCH_APPLE
+	help
+	  Enable support for Audio DMA Controller found on Apple Silicon SoCs.
+
 config AT_HDMAC
 	tristate "Atmel AHB DMA support"
 	depends on ARCH_AT91
@@ -172,7 +180,7 @@ config DMA_SUN6I
 
 config DW_AXI_DMAC
 	tristate "Synopsys DesignWare AXI DMA support"
-	depends on OF || COMPILE_TEST
+	depends on OF
 	depends on HAS_IOMEM
 	select DMA_ENGINE
 	select DMA_VIRTUAL_CHANNELS
